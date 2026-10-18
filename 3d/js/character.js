@@ -10,18 +10,32 @@
 import * as THREE from 'three';
 import { HERO_HEIGHT } from './config.js';
 
-const CLIP = { idle: 'Idle', walk: 'Walking_A', run: 'Running_A', interact: 'Interact', cheer: 'Cheer', hit: 'Hit_A' };
+/* Имена анимаций у разных источников разные (KayKit, Meshy, Mixamo) — ищем по списку вариантов */
+const CLIP = {
+  idle: [/^idle$/i, /idle/i],
+  walk: [/^walking_a$/i, /walk/i],
+  run: [/^running_a$/i, /run/i],
+  interact: [/^interact$/i, /talk|gesture|interact/i],
+  cheer: [/^cheer$/i, /cheer|roar|victory/i],
+  hit: [/^hit_a$/i, /hit|react/i],
+};
+const findClip = (clips, patterns) => {
+  for (const re of patterns) { const c = clips.find((x) => re.test(x.name)); if (c) return c; }
+  return null;
+};
 const FADE = 0.25;
 
 export class Character {
-  constructor({ root, clips }, { x = 0, z = 0, face = 0 } = {}) {
+  constructor({ root, clips }, { x = 0, z = 0, face = 0, height = HERO_HEIGHT } = {}) {
     this.object = new THREE.Group();
     this.object.add(root);
     // единый рост: модель масштабируется так, чтобы любой персонаж был HERO_HEIGHT
     const box = new THREE.Box3().setFromObject(root);
     const h = box.max.y - box.min.y || 1;
-    root.scale.setScalar(HERO_HEIGHT / h);
-    root.position.y = -box.min.y * (HERO_HEIGHT / h);
+    root.scale.setScalar(height / h);
+    root.position.y = -box.min.y * (height / h);
+    this.root = root;
+    this.baseY = root.position.y;
 
     this.object.position.set(x, 0, z);
     this.heading = THREE.MathUtils.degToRad(face);
@@ -31,10 +45,13 @@ export class Character {
 
     this.mixer = new THREE.AnimationMixer(root);
     this.actions = {};
-    for (const [key, name] of Object.entries(CLIP)) {
-      const clip = clips.find((c) => c.name === name);
+    for (const [key, patterns] of Object.entries(CLIP)) {
+      const clip = findClip(clips, patterns);
       if (clip) this.actions[key] = this.mixer.clipAction(clip);
     }
+    // модель без скелета (временная, до рига): вместо анимаций — покачивание при ходьбе
+    this.procedural = !this.actions.idle && !this.actions.walk;
+    this.phase = 0;
     for (const k of ['interact', 'cheer', 'hit']) {
       const a = this.actions[k];
       if (a) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
@@ -74,8 +91,8 @@ export class Character {
     const key = this.talking ? 'idle' : this.speed > 3.2 ? 'run' : this.speed > 0.15 ? 'walk' : 'idle';
     this.play(key);
     // темп шага подстраивается под реальную скорость, чтобы ноги не «скользили»
-    if (key === 'walk') this.actions.walk.timeScale = THREE.MathUtils.clamp(this.speed / 2.3, 0.6, 1.4);
-    if (key === 'run') this.actions.run.timeScale = THREE.MathUtils.clamp(this.speed / 4.6, 0.7, 1.3);
+    if (key === 'walk' && this.actions.walk) this.actions.walk.timeScale = THREE.MathUtils.clamp(this.speed / 2.3, 0.6, 1.4);
+    if (key === 'run' && this.actions.run) this.actions.run.timeScale = THREE.MathUtils.clamp(this.speed / 4.6, 0.7, 1.3);
   }
 
   /** Плавный поворот к углу (радианы) */
@@ -91,5 +108,16 @@ export class Character {
   update(dt) {
     this.updateState();
     this.mixer.update(dt);
+    if (this.procedural) this.#bob(dt);
+  }
+
+  /** Простое движение для модели без скелета: шаг вверх-вниз, наклон вперёд, лёгкое дыхание на месте */
+  #bob(dt) {
+    const moving = this.speed > 0.15, k = Math.min(1, this.speed / 4.6);
+    this.phase += dt * (moving ? 4 + this.speed * 1.6 : 1.6);
+    const step = moving ? Math.abs(Math.sin(this.phase)) * 0.07 * (0.5 + k) : Math.sin(this.phase) * 0.012;
+    this.root.position.y = this.baseY + step;
+    this.root.rotation.x += ((moving ? 0.1 + 0.08 * k : 0) - this.root.rotation.x) * Math.min(1, dt * 8);
+    this.root.rotation.z = moving ? Math.sin(this.phase) * 0.04 : 0;
   }
 }

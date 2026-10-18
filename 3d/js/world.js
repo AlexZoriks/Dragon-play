@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { ENV_SCALE, WORLD, PATHS, SQUARE, PROPS, FENCES, LAMPS, DOORS, GRAVEYARD, FOREST, HORIZON } from './config.js';
 import { envModel } from './assets.js';
 import { Colliders } from './collision.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const DEG = Math.PI / 180;
 const C = {
@@ -12,7 +13,7 @@ const C = {
   dirt: new THREE.Color(0x8a6b47), dirtDark: new THREE.Color(0x6e5436),
 };
 
-export async function buildWorld(scene) {
+export async function buildWorld(scene, renderer) {
   const half = WORLD.size / 2;
   const colliders = new Colliders(half - 1);
   const occluders = [];
@@ -21,6 +22,10 @@ export async function buildWorld(scene) {
   scene.background = new THREE.Color(WORLD.fog[0]);
   scene.fog = new THREE.Fog(...WORLD.fog);
   const lights = addLights(scene);
+  // мягкое окружение для металла: без него металлическая броня выглядит чёрной
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.35;
   scene.add(makeGround(WORLD.size));
   scene.add(makeGrass(WORLD.size));
   scene.add(makeScatter(WORLD.size));

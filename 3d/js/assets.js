@@ -47,7 +47,8 @@ export async function characterModel(name, keep = []) {
     o.frustumCulled = false;            // скинированные меши иначе пропадают у края кадра
     // у многоматериальных узлов меш — дочерний объект с суффиксом, имя узла — у родителя
     const names = [o.name, o.parent && !o.parent.isBone ? o.parent.name : ''];
-    o.visible = names.some((n) => isBody(n) || keepSet.has(n));
+    // у моделей из одного меша (Meshy) сменных частей нет — показываем всё
+    if (keep.length) o.visible = names.some((n) => isBody(n) || keepSet.has(n));
   });
   return { root, clips: gltf.animations };
 }

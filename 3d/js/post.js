@@ -37,6 +37,14 @@ export class PostFx {
     this.ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.4, thickness: 1, scale: 1.2 });
     this.ao.blendIntensity = 0.9;
     this.composer.addPass(this.ao);
+    // значки над жителями (спрайты) не должны попадать в проход затенения — иначе вокруг них тёмный квадрат
+    const aoRender = this.ao.render.bind(this.ao);
+    this.ao.render = (...args) => {
+      const hidden = [];
+      scene.traverse((o) => { if (o.isSprite && o.visible) { o.visible = false; hidden.push(o); } });
+      aoRender(...args);
+      for (const o of hidden) o.visible = true;
+    };
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.35, 0.5, 0.88);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());            // тонмаппинг и sRGB

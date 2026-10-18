@@ -98,7 +98,9 @@ export const NPCS = [
   },
 ];
 
-export const HERO = { model: 'Rogue_Hooded', keep: ['Knife', 'Rogue_Cape'], x: 0.5, z: 9, face: 180 };
+/* Главный герой: Voidflame Reaper (Meshy). Пока без скелета — двигается покачиванием; после рига заработают анимации.
+   keep не нужен: у модели нет сменных предметов. height — рост в метрах (демон выше людей). */
+export const HERO = { model: 'Reaper', keep: [], x: 0.5, z: 9, face: 180, height: 2.15 };
 
 /* Входы в здания: кнопка «Войти» появляется только у крыльца. local[0] — сдвиг вдоль фасада. */
 export const DOORS = [

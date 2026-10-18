@@ -62,9 +62,13 @@ input.onAction = () => document.getElementById('btn-action').click();
 async function start() {
   onProgress(ui.progress);
   await preload([charUrl(HERO.model), ...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')]);
-  state.world = await buildWorld(scene);
+  state.world = await buildWorld(scene, renderer);
   state.hero = new Character(await characterModel(HERO.model, HERO.keep), HERO);
   scene.add(state.hero.object);
+  // «свет героя», как в Diablo: тёмную модель видно на тёмной земле и ночью
+  const heroLight = new THREE.PointLight(0xffd2a0, 6, 6, 1.6);
+  heroLight.position.set(0, 3.2, 0.6);
+  state.hero.object.add(heroLight);
   for (const def of NPCS) {
     const npc = new Npc(await characterModel(def.model, def.keep), def);
     state.npcs.push(npc);
