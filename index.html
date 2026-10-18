@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="color-scheme" content="dark"><meta name="theme-color" content="#0c0a10">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Дракон">
+<meta name="author" content="AlexZoriks"><meta name="copyright" content="© 2026 AlexZoriks. Все права защищены.">
+<meta name="description" content="Хроники золотого дракона — пиксельная RPG">
+<title>Хроники золотого дракона</title>
+<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="s.06674495eb.css">
+</head>
+<body>
+<!-- © 2026 AlexZoriks · Хроники золотого дракона · Все права защищены -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="gg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff3bd"/><stop offset=".5" stop-color="#e2b04a"/><stop offset="1" stop-color="#8d5f12"/></linearGradient>
+<linearGradient id="gs" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8eef8"/><stop offset=".55" stop-color="#8d9bb2"/><stop offset="1" stop-color="#4b566a"/></linearGradient>
+<linearGradient id="gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a74"/><stop offset="1" stop-color="#b3281a"/></linearGradient>
+<linearGradient id="gb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fd0ff"/><stop offset="1" stop-color="#2e62c0"/></linearGradient>
+<linearGradient id="gp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3e2b3"/><stop offset="1" stop-color="#b98f4f"/></linearGradient>
+<linearGradient id="gg2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9cf0b4"/><stop offset="1" stop-color="#21915a"/></linearGradient>
+</defs></svg>
+<canvas id="cv"></canvas>
+<div id="top">
+ <div class="ibar">
+  <button class="ib" data-w="char" id="b-char" aria-label="Персонаж"><svg viewBox="0 0 48 48"><path d="M11 29c0-10 5-18 13-18s13 8 13 18v9l-4 4h-6v-6h-6v6h-6l-4-4z" fill="url(#gs)" stroke="#2c3442" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 22c2-6 6-9 10-9" stroke="#fff" stroke-opacity=".7" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="14" y="25" width="20" height="5" rx="2.5" fill="#1a1f29"/><path d="M24 11c3-6 9-8 14-5-5 0-8 2-10 6z" fill="url(#gr)" stroke="#5c1208" stroke-width="1.2"/><path d="M24 11v8" stroke="url(#gg)" stroke-width="2.4" stroke-linecap="round"/></svg><i class="dot"></i></button>
+  <button class="ib" data-w="stats" id="b-stats" aria-label="Характеристики"><svg viewBox="0 0 48 48"><path d="M24 5l15 6v11c0 10-6 17-15 21C15 39 9 32 9 22V11z" fill="url(#gp)" stroke="#6b4a14" stroke-width="1.6" stroke-linejoin="round"/><path d="M24 9l11 4.5V22c0 8-4.5 13.5-11 17.3" fill="rgba(255,255,255,.18)"/><path d="M17 27v-6M24 27V15M31 27v-9" stroke="#3a2608" stroke-width="3.2" stroke-linecap="round"/><circle cx="17" cy="19" r="2" fill="#c9382a"/><circle cx="24" cy="13" r="2" fill="#2e62c0"/><circle cx="31" cy="16" r="2" fill="#21915a"/></svg><i class="dot"></i></button>
+  <button class="ib" data-w="tal" id="b-tal" aria-label="Умения и таланты"><svg viewBox="0 0 48 48"><path d="M24 43V26M24 26L12 17M24 26l12-9M24 26V13" stroke="url(#gg)" stroke-width="3" stroke-linecap="round" fill="none"/><circle cx="12" cy="16" r="5.5" fill="url(#gr)" stroke="#5c1208" stroke-width="1.4"/><circle cx="36" cy="16" r="5.5" fill="url(#gb)" stroke="#143a7a" stroke-width="1.4"/><circle cx="24" cy="12" r="6" fill="url(#gg2)" stroke="#0e4a2a" stroke-width="1.4"/><path d="M24 7.5l1.5 3 3.3.5-2.4 2.3.6 3.3-3-1.6-3 1.6.6-3.3-2.4-2.3 3.3-.5z" fill="#fff6c8"/><path d="M14 43h20" stroke="url(#gg)" stroke-width="3.2" stroke-linecap="round"/></svg><i class="dot"></i></button>
+  <button class="ib" data-w="map" id="b-map" aria-label="Карта"><svg viewBox="0 0 48 48"><path d="M7 10l11-3 12 3 11-3v31l-11 3-12-3-11 3z" fill="url(#gp)" stroke="#6b4a14" stroke-width="1.6" stroke-linejoin="round"/><path d="M18 7v31M30 10v31" stroke="#6b4a14" stroke-opacity=".5" stroke-width="1.4"/><path d="M13 30c4-6 6 0 10-5s5-6 8-4" stroke="#2e62c0" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="3 3"/><path d="M33 29l5 5M38 29l-5 5" stroke="#c9382a" stroke-width="3" stroke-linecap="round"/></svg></button>
+  <button class="ib" data-w="skin" id="b-skin" aria-label="Облики"><svg viewBox="0 0 48 48"><path d="M24 43L5 19l7-11h24l7 11z" fill="url(#gb)" stroke="#143a7a" stroke-width="1.6" stroke-linejoin="round"/><path d="M5 19h38M17 8l7 35M31 8l-7 35M12 8l5 11M36 8l-5 11" stroke="#fff" stroke-opacity=".6" stroke-width="1.3" fill="none"/><path d="M17 8l-5 11h12zM31 8l5 11H24z" fill="#fff" fill-opacity=".28"/></svg></button>
+  <button class="ib" data-w="quest" id="b-quest" aria-label="Задания"><svg viewBox="0 0 48 48"><path d="M10 8h22c3 0 5 2 5 5v27c0 2-1 3-3 3H15c-3 0-5-2-5-5z" fill="url(#gp)" stroke="#6b4a14" stroke-width="1.6" stroke-linejoin="round"/><path d="M37 13c0-3 2-5 5-5v8c0 2-2 4-5 4" fill="#d9b574" stroke="#6b4a14" stroke-width="1.4"/><path d="M16 17h14M16 23h14M16 29h9" stroke="#6b4a14" stroke-width="2" stroke-linecap="round"/><circle cx="31" cy="33" r="4.5" fill="url(#gr)" stroke="#6b1a10" stroke-width="1.2"/></svg><i class="dot"></i></button>
+ </div>
+ <div id="gold"><i class="cn"></i>0</div>
+</div>
+<div id="loc" role="status"></div>
+<div id="trk"></div>
+<div id="toast" class="glass" role="status"></div>
+<div id="hud">
+ <div id="av" data-s=""></div><span id="lvb">1</span><span id="nick"></span><button class="petb" id="petb" data-w="pet" aria-label="Питомец"><img alt="" src=""></button>
+ <div class="bars"><div class="bb hp"><i id="hpf"></i><span id="hpn"></span></div><div class="bb mp"><i id="mpf"></i><span id="mpn"></span></div><div class="bb xp"><i id="xpf"></i></div></div>
+</div>
+<div class="ctl">
+ <div class="stick" id="stick" aria-label="Джойстик"><i class="sr"></i><i class="sk" id="sk"></i></div>
+ <div class="side"><div class="zr"><button class="b zb" id="zo" aria-label="Отдалить">&minus;</button><button class="b zb" id="zi" aria-label="Приблизить">+</button></div><div class="pr"><button class="b pb" id="rideb" aria-label="Полёт на драконе" style="display:none">🐉</button><button class="b pb" id="qm" aria-label="Зелье маны">&#128311;</button><button class="b pb" id="qp" aria-label="Зелье лечения">&#129514;</button></div></div>
+</div>
+<div id="nickm"><div class="card"><h3 id="nickh">Ник</h3><p id="nickp"></p><input id="nicki" maxlength="16" autocomplete="nickname" placeholder="Например: Ярослав"><p id="nicke"></p><div class="ad-g2"><button class="go r" id="nickx">Отмена</button><button class="go" id="nickok">Готово</button></div></div></div>
+<button id="saveb" aria-label="Сохранить игру"><span class="si">💾</span><span class="sl">Сохранить</span></button>
+<div id="verm"></div>
+<div id="admbar"></div><div id="adm"></div>
+<div id="admpw"><div class="card"><h3>🔒 Режим администратора</h3><input type="password" id="admpwi" placeholder="Пароль" autocomplete="current-password"><p id="admpwe"></p><div class="ad-g2"><button class="go r" id="admpwx">Отмена</button><button class="go" id="admpwok">Войти</button></div></div></div>
+<div id="dlg"><div class="dbox"><div id="dn"></div><div id="dt"></div><div id="dc"></div></div></div>
+<div id="fade"></div>
+<div class="over" id="wn"><div class="bk"></div><div class="win" id="wns"></div></div>
+<div class="over" id="bt"><div class="bk"></div><div class="sheet" id="bts"></div></div>
+<div class="over on" id="ov"><div class="bk"></div><div class="sheet" id="ovs"></div></div>
+
+<script src="g.4e37fcd5a3.js"></script>
+<script>if("serviceWorker"in navigator&&location.protocol==="https:")addEventListener("load",function(){navigator.serviceWorker.register("sw.js")})</script>
+</body>
+</html>
