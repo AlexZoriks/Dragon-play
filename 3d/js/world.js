@@ -1,7 +1,8 @@
-/* Тестовая локация: земля с дорогами, здания и природа из пака KayKit, фонари, свет и туман.
+/* Тестовая локация: земля с дорогами, здания и природа (паки KayKit Medieval и Halloween),
+   кладбище, лес по краю, холмы на горизонте, фонари, свет и туман.
    Каждый объект сразу получает коллайдер; здания помечены как «заслоняющие» для камеры. */
 import * as THREE from 'three';
-import { ENV_SCALE, WORLD, PATHS, SQUARE, PROPS, FENCES, LAMPS, DOORS } from './config.js';
+import { ENV_SCALE, WORLD, PATHS, SQUARE, PROPS, FENCES, LAMPS, DOORS, GRAVEYARD, FOREST, HORIZON } from './config.js';
 import { envModel } from './assets.js';
 import { Colliders } from './collision.js';
 
@@ -22,9 +23,10 @@ export async function buildWorld(scene) {
   const lights = addLights(scene);
   scene.add(makeGround(WORLD.size));
   scene.add(makeGrass(WORLD.size));
+  scene.add(makeScatter(WORLD.size));
 
   for (const p of PROPS) {
-    const obj = await envModel(p.model);
+    const obj = await envModel(p.model, p.pack);
     const s = p.scale ?? ENV_SCALE;
     obj.scale.setScalar(s);
     obj.rotation.y = p.rot * DEG;
@@ -41,7 +43,10 @@ export async function buildWorld(scene) {
   }
 
   for (const f of FENCES) await addFence(scene, colliders, f);
-  addLamps(scene, colliders);
+  await addLamps(scene, colliders);
+  await addGraveyard(scene, colliders);
+  await addForest(scene, colliders, occluders);
+  await addHorizon(scene);
   const doors = DOORS.map((d) => makeDoor(named[d.building], d));
 
   return { colliders, occluders, doors, lights };
@@ -54,7 +59,7 @@ function addLights(scene) {
   sun.position.set(-18, 22, 10);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  const sc = sun.shadow.camera; sc.left = sc.bottom = -28; sc.right = sc.top = 28; sc.near = 1; sc.far = 80;
+  const sc = sun.shadow.camera; sc.left = sc.bottom = -20; sc.right = sc.top = 20; sc.near = 1; sc.far = 80;
   sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);
   return { hemi, sun };
@@ -98,9 +103,54 @@ function makeGround(size) {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.computeVertexNormals();
-  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, map: detailTexture() }));
   mesh.receiveShadow = true;
   return mesh;
+}
+
+/* Мелкая фактура земли (штрихи травы, крапинки, камешки), рисуется один раз на холсте
+   и повторяется по всей карте; цвет даёт вершинная раскраска, текстура — только светотень. */
+function detailTexture() {
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  g.fillStyle = '#d8d8d8'; g.fillRect(0, 0, N, N);
+  let seed = 3; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 2600; i++) {                     // штрихи
+    const x = r() * N, y = r() * N, l = 3 + r() * 6, a = -1.2 + r() * 0.5, v = 150 + r() * 105;
+    g.strokeStyle = `rgb(${v},${v},${v})`; g.lineWidth = 1 + r();
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+  }
+  for (let i = 0; i < 260; i++) {                      // крапинки и камешки
+    const v = r() < 0.5 ? 120 + r() * 40 : 245;
+    g.fillStyle = `rgb(${v},${v},${v})`; g.beginPath(); g.arc(r() * N, r() * N, 0.6 + r() * 1.6, 0, 7); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(26, 26); t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/* Цветы и мелкие камни на траве: два InstancedMesh */
+function makeScatter(size) {
+  const group = new THREE.Group();
+  let seed = 19; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const place = (mesh, n, colorFn, sMin, sMax) => {
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
+    let i = 0;
+    while (i < n) {
+      const x = (r() - 0.5) * size * 0.9, z = (r() - 0.5) * size * 0.9;
+      if (pathDistance(x, z) < 0.4) continue;
+      e.set(0, r() * 6.3, 0); q.setFromEuler(e); const k = sMin + r() * (sMax - sMin); s.set(k, k * (0.7 + r() * 0.6), k);
+      mesh.setMatrixAt(i, m.compose(p.set(x, 0, z), q, s)); mesh.setColorAt(i, colorFn(col)); i++;
+    }
+    mesh.castShadow = true; mesh.receiveShadow = true; group.add(mesh);
+  };
+  const flower = new THREE.IcosahedronGeometry(0.07, 0); flower.translate(0, 0.12, 0);
+  const petals = ['#c9b04a', '#b8584a', '#8a78b8', '#d8d4c4'];
+  place(new THREE.InstancedMesh(flower, new THREE.MeshLambertMaterial(), 420), 420, (c) => c.set(petals[Math.floor(r() * 4)]), 0.8, 1.3);
+  const pebble = new THREE.DodecahedronGeometry(0.12, 0); pebble.translate(0, 0.04, 0);
+  place(new THREE.InstancedMesh(pebble, new THREE.MeshLambertMaterial(), 150), 150, (c) => c.setHSL(0.08, 0.05, 0.2 + r() * 0.12), 0.6, 1.5);
+  return group;
 }
 
 /* --- пучки травы: один InstancedMesh, дешёво для телефона --- */
@@ -156,17 +206,69 @@ async function addFence(scene, colliders, f) {
   colliders.addBox((ax + bx) / 2, (az + bz) / 2, 0.15, len / 2, ang);
 }
 
-function addLamps(scene, colliders) {
-  const post = new THREE.CylinderGeometry(0.07, 0.09, 2.6, 6), cap = new THREE.BoxGeometry(0.34, 0.4, 0.34);
-  const wood = new THREE.MeshLambertMaterial({ color: 0x2b2118 }), glass = new THREE.MeshBasicMaterial({ color: 0xffc070 });
-  for (const [x, z] of LAMPS) {
-    const g = new THREE.Group();
-    const p = new THREE.Mesh(post, wood); p.position.y = 1.3; p.castShadow = true;
-    const c = new THREE.Mesh(cap, glass); c.position.y = 2.75;
-    const light = new THREE.PointLight(0xffa64a, 9, 9, 1.8); light.position.y = 2.7;
-    g.add(p, c, light); g.position.set(x, 0, z);
-    scene.add(g);
-    colliders.addCircle(x, z, 0.25);
+async function addLamps(scene, colliders) {
+  for (const [x, z, rot] of LAMPS) {
+    const lamp = await envModel('post_lantern', 'gothic');
+    lamp.rotation.y = rot * DEG; lamp.position.set(x, 0, z);
+    // фонарь висит на кронштейне: свет ставим в точку лампы
+    const head = new THREE.Vector3(0, 2.7, 1.1).applyAxisAngle(new THREE.Vector3(0, 1, 0), rot * DEG);
+    const light = new THREE.PointLight(0xffa04a, 14, 10, 1.7);
+    light.position.copy(head).add(lamp.position);
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd08a }));
+    glow.position.copy(light.position).y -= 0.1;
+    scene.add(lamp, light, glow);
+    colliders.addCircle(x, z, 0.3);
+  }
+}
+
+async function addGraveyard(scene, colliders) {
+  const G = GRAVEYARD, x0 = G.x - G.w / 2, x1 = G.x + G.w / 2, z0 = G.z - G.d / 2, z1 = G.z + G.d / 2;
+  const fenceLine = async (ax, az, bx, bz, gapAt = null) => {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.round(len / 4), ang = Math.atan2(bz - az, bx - ax);
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+      if (gapAt !== null && Math.abs(t - gapAt) < 0.5 / n) {
+        const gate = await envModel('arch_gate', 'gothic'); gate.position.set(x, 0, z); gate.rotation.y = -ang; scene.add(gate);
+        colliders.addCircle(x + Math.cos(ang) * 1.9, z + Math.sin(ang) * 1.9, 0.35); colliders.addCircle(x - Math.cos(ang) * 1.9, z - Math.sin(ang) * 1.9, 0.35);
+        continue;
+      }
+      const f = await envModel(i % 3 === 2 ? 'fence_broken' : 'fence', 'gothic'); f.position.set(x, 0, z); f.rotation.y = -ang; scene.add(f);
+      colliders.addBox(x, z, 2, 0.25, -ang);
+    }
+    for (const [px, pz] of [[ax, az], [bx, bz]]) { const p = await envModel('fence_pillar', 'gothic'); p.position.set(px, 0, pz); scene.add(p); }
+  };
+  await fenceLine(x0, z1, x1, z1, 0.5);                 // южная сторона с воротами
+  await fenceLine(x0, z0, x1, z0);
+  await fenceLine(x0, z0, x0, z1);
+  await fenceLine(x1, z0, x1, z1);
+  for (const [name, dx, dz, rot] of G.items) {
+    const o = await envModel(name, 'gothic'); o.position.set(G.x + dx, 0, G.z + dz); o.rotation.y = rot * DEG; scene.add(o);
+    if (!name.startsWith('candle')) addCollider(colliders, o, { x: G.x + dx, z: G.z + dz, col: name.startsWith('tree') ? 'circle' : 'box', rcol: 0.5 });
+  }
+  const candle = new THREE.PointLight(0xff9a3a, 6, 7, 1.8); candle.position.set(G.x + 1.5, 1.4, G.z - 0.2); scene.add(candle);
+}
+
+/* Лес по краю: случайные (но всегда одинаковые) деревья в кольце между inner и outer */
+async function addForest(scene, colliders) {
+  const kinds = [['tree_pine_orange_large', 'gothic', 1], ['tree_pine_yellow_large', 'gothic', 1], ['tree_pine_orange_medium', 'gothic', 1.2],
+    ['trees_B_large', 'env', ENV_SCALE], ['trees_A_large', 'env', ENV_SCALE], ['tree_dead_large', 'gothic', 1.1]];
+  let seed = FOREST.seed; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let placed = 0, tries = 0;
+  while (placed < FOREST.count && tries++ < 2000) {
+    const x = (r() * 2 - 1) * FOREST.outer, z = (r() * 2 - 1) * FOREST.outer, m = Math.max(Math.abs(x), Math.abs(z));
+    if (m < FOREST.inner || pathDistance(x, z) < 2.5) continue;
+    if (Math.abs(x - GRAVEYARD.x) < GRAVEYARD.w / 2 + 2 && Math.abs(z - GRAVEYARD.z) < GRAVEYARD.d / 2 + 2) continue;
+    const [name, pack, sc] = kinds[Math.floor(r() * kinds.length)];
+    const o = await envModel(name, pack); o.scale.setScalar(sc * (0.85 + r() * 0.35)); o.rotation.y = r() * 6.28; o.position.set(x, 0, z);
+    scene.add(o); colliders.addCircle(x, z, 0.8); placed++;
+  }
+}
+
+async function addHorizon(scene) {
+  for (const [name, x, z, rot, sc] of HORIZON) {
+    const o = await envModel(name); o.scale.setScalar(sc); o.rotation.y = rot * DEG; o.position.set(x, -0.3, z);
+    o.traverse((m) => { if (m.isMesh) m.castShadow = false; });
+    scene.add(o);
   }
 }
 

@@ -17,7 +17,7 @@ function load(url) {
   return cache.get(url);
 }
 
-export const envUrl = (name) => `assets/models/env/${name}.gltf`;
+export const envUrl = (name, pack = 'env') => `assets/models/${pack}/${name}.gltf`;
 export const charUrl = (name) => `assets/models/chars/${name}.glb`;
 
 /** Предзагрузка списка файлов; возвращает Map url → gltf */
@@ -28,8 +28,8 @@ export async function preload(urls) {
 }
 
 /** Статичная модель окружения: общая геометрия, свои материалы не нужны */
-export async function envModel(name) {
-  const gltf = await load(envUrl(name));
+export async function envModel(name, pack = 'env') {
+  const gltf = await load(envUrl(name, pack));
   const obj = gltf.scene.clone(true);
   obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return obj;

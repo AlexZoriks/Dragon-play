@@ -38,30 +38,31 @@ export class FollowCamera {
     const dist = this.distance * fit, p = CAMERA.pitch * DEG, h = Math.sin(p) * dist, r = Math.cos(p) * dist;
     this.camera.position.set(this.focus.x + Math.sin(this.yaw) * r, this.focus.y + h, this.focus.z + Math.cos(this.yaw) * r);
     this.camera.lookAt(this.focus);
-    this.#fade(target, occluders);
+    this.#fade(target, occluders, dt);
   }
 
-  #fade(target, occluders) {
-    const from = this.camera.position, to = new THREE.Vector3(target.x, 1, target.z);
-    const dir = to.clone().sub(from), len = dir.length();
-    this.ray.set(from, dir.normalize()); this.ray.far = len - 0.8;
-    const hit = new Set();
-    for (const h of this.ray.intersectObjects(occluders, true)) {
-      let o = h.object; while (o && !o.userData.occluder) o = o.parent;
-      if (o) hit.add(o);
+  #fade(target, occluders, dt) {
+    // устойчивая проверка: луч от камеры к голове и к ногам героя против габаритов здания
+    const from = this.camera.position, hit = new Set(), p = new THREE.Vector3();
+    for (const y of [0.3, 1.6]) {
+      const to = new THREE.Vector3(target.x, y, target.z), len = to.distanceTo(from);
+      this.ray.set(from, to.sub(from).normalize());
+      for (const o of occluders) {
+        o.userData.box ??= new THREE.Box3().setFromObject(o).expandByScalar(-0.3);
+        if (this.ray.ray.intersectBox(o.userData.box, p) && p.distanceTo(from) < len - 0.5) hit.add(o);
+      }
     }
     for (const o of occluders) {
       const want = hit.has(o) ? 0.3 : 1;
-      o.userData.alpha = o.userData.alpha ?? 1;
+      o.userData.alpha ??= 1;
       if (Math.abs(o.userData.alpha - want) < 0.01) continue;
-      o.userData.alpha += (want - o.userData.alpha) * 0.2;
+      o.userData.alpha += (want - o.userData.alpha) * Math.min(1, dt * 8);
       const a = o.userData.alpha;
       o.traverse((m) => {
         if (!m.isMesh) return;
         m.material.transparent = a < 0.99;
         m.material.opacity = a;
         m.material.depthWrite = a > 0.99;
-        m.castShadow = true;
       });
     }
   }

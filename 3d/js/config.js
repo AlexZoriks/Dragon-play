@@ -29,7 +29,9 @@ export const SQUARE = { x: 0, z: 0, r: 5 };
 /* Объекты окружения. model — имя файла в assets/models/env; rot — градусы; col — коллайдер. */
 export const PROPS = [
   { model: 'building_tavern_red', x: -11, z: -9, rot: 30, col: 'box', name: 'tavern' },
-  { model: 'building_church_red', x: -1, z: -22, rot: 0, col: 'box' },
+  { model: 'building_church_red', x: -1, z: -21, rot: 0, col: 'box' },
+  { model: 'bench', pack: 'gothic', x: -6.5, z: 1.6, rot: 70, col: 'box', scale: 1 },
+  { model: 'bench', pack: 'gothic', x: 3.6, z: 5.6, rot: -30, col: 'box', scale: 1 },
   { model: 'building_home_A_red', x: 9, z: -10, rot: -20, col: 'box' },
   { model: 'building_home_B_red', x: 17, z: -2, rot: -60, col: 'box' },
   { model: 'building_blacksmith_red', x: 15, z: 9, rot: -110, col: 'box' },
@@ -43,17 +45,12 @@ export const PROPS = [
   { model: 'wheelbarrow', x: 5.5, z: -6.5, rot: 40, col: 'box', scale: 3 },
   { model: 'sack', x: -4.2, z: -6.2, rot: 0, col: 'circle', scale: 3 },
 
-  { model: 'trees_A_medium', x: -22, z: 4, rot: 0, col: 'circle', rcol: 2.6 },
-  { model: 'trees_A_medium', x: 23, z: -16, rot: 120, col: 'circle', rcol: 2.6 },
   { model: 'tree_single_A', x: -15, z: 12, rot: 0, col: 'circle', rcol: 0.9 },
   { model: 'tree_single_B', x: -9, z: 17, rot: 40, col: 'circle', rcol: 0.9 },
   { model: 'tree_single_A', x: 8, z: 20, rot: 70, col: 'circle', rcol: 0.9 },
   { model: 'tree_single_B', x: 19, z: 18, rot: 10, col: 'circle', rcol: 0.9 },
-  { model: 'tree_single_A', x: -19, z: -18, rot: 10, col: 'circle', rcol: 0.9 },
-  { model: 'tree_single_B', x: 13, z: -24, rot: 10, col: 'circle', rcol: 0.9 },
-  { model: 'tree_single_A', x: -26, z: -6, rot: 90, col: 'circle', rcol: 0.9 },
-  { model: 'tree_single_B', x: 27, z: 4, rot: 90, col: 'circle', rcol: 0.9 },
-  { model: 'rock_single_A', x: -6, z: 9, rot: 0, col: 'circle', scale: 4 },
+  { model: 'tree_pine_orange_medium', pack: 'gothic', x: -7, z: 9, rot: 0, col: 'circle', rcol: 0.7, scale: 1.1 },
+  { model: 'rock_single_A', x: -6, z: 12, rot: 0, col: 'circle', scale: 4 },
   { model: 'rock_single_C', x: 6.5, z: 14, rot: 50, col: 'circle', scale: 4 },
 ];
 
@@ -63,8 +60,28 @@ export const FENCES = [
   { from: [4, -16], to: [4, -12.5] },
 ];
 
-/* Фонари: тёплый свет вечером. Не больше трёх — точечный свет дорог на iPhone. */
-export const LAMPS = [[-3.5, 4.5], [4, -3.8], [-1.8, 13]];
+/* Фонари на столбах (пак Halloween): у каждого свой тёплый свет. Не больше четырёх источников. */
+export const LAMPS = [[-6, 5.2, 200], [3.8, -3.6, 20], [-1.9, 13, 90], [-4.2, -14.5, 90]];
+
+/* Кладбище за церковью: ограда, ворота, могилы, мёртвые деревья, свечи */
+export const GRAVEYARD = {
+  x: -1, z: -31, w: 18, d: 10,
+  gate: 'south',
+  items: [
+    ['gravestone', -6, -2, 10], ['gravestone', -2, -3, -8], ['grave_A', 3, -2, 0], ['grave_B', 6.5, -3, 15],
+    ['gravemarker_A', -5, 2, -20], ['gravestone', 0, 2, 5], ['grave_A', 5, 2.4, -5], ['coffin', -7.2, 3, 80],
+    ['tree_dead_large', 7.5, 3.4, 40], ['tree_dead_medium', -8, -3.6, -30], ['shrine_candles', 1.5, -0.2, 0],
+    ['candle_triple', -3.5, 0.5, 0], ['candle_triple', 3.8, 0.6, 30],
+  ],
+};
+
+/* Лес по краю карты и холмы на горизонте — чтобы мир не обрывался пустой плоскостью */
+export const FOREST = { inner: 25, outer: 33, count: 70, seed: 11 };
+export const HORIZON = [
+  ['hills_A_trees', -44, -30, 0, 9], ['mountain_A_grass_trees', 0, -50, 30, 10], ['hills_B_trees', 42, -28, 60, 9],
+  ['hills_A_trees', 48, 12, 120, 9], ['hills_B_trees', -46, 16, 200, 9], ['mountain_A_grass_trees', 30, 46, 250, 9],
+  ['hills_A_trees', -30, 46, 300, 9],
+];
 
 /* Жители. model — файл в assets/models/chars; keep — какие предметы в руках видны. */
 export const NPCS = [

@@ -9,6 +9,7 @@ import { Npc } from './npc.js';
 import { FollowCamera } from './camera.js';
 import { Input } from './input.js';
 import { ui } from './ui.js';
+import { PostFx } from './post.js';
 
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -20,6 +21,7 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
 const view = new FollowCamera(innerWidth / innerHeight);
+const post = new PostFx(renderer, scene, view.camera);
 const input = new Input({ dpad: document.getElementById('dpad'), canvas });
 const state = { run: true, quality: 'high', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0 };
 window.__g3d = state;                       // для автотестов
@@ -29,6 +31,8 @@ function resize() {
   const q = state.quality === 'high' ? Math.min(devicePixelRatio, 2) : 1;
   renderer.setPixelRatio(q);
   renderer.setSize(innerWidth, innerHeight, false);
+  // постобработка дорогая на телефоне: рисуем её не выше чем в 1.5× плотности
+  post.setSize(innerWidth, innerHeight, Math.min(q, 1.5));
   view.camera.aspect = innerWidth / innerHeight;
   view.camera.updateProjectionMatrix();
 }
@@ -47,7 +51,7 @@ bind('btn-quality', () => {
   renderer.shadowMap.enabled = state.quality === 'high';
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
   resize();
-  ui.toast(state.quality === 'high' ? 'Качество: высокое (тени, чёткость)' : 'Качество: экономное (без теней)');
+  ui.toast(state.quality === 'high' ? 'Качество: высокое (тени, объёмный свет, цвет)' : 'Качество: экономное (без теней и эффектов)');
 });
 input.onRotateStep = (s) => view.rotateStep(s);
 input.onRotate = (deg) => view.rotateBy(deg);
@@ -57,7 +61,7 @@ input.onAction = () => document.getElementById('btn-action').click();
 /* ---------- загрузка ---------- */
 async function start() {
   onProgress(ui.progress);
-  await preload([charUrl(HERO.model), ...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model)), envUrl('fence_wood_straight')]);
+  await preload([charUrl(HERO.model), ...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')]);
   state.world = await buildWorld(scene);
   state.hero = new Character(await characterModel(HERO.model, HERO.keep), HERO);
   scene.add(state.hero.object);
@@ -91,7 +95,7 @@ function frame() {
   sun.target.position.set(hero.position.x, 0, hero.position.z);
   sun.position.set(hero.position.x - 18, 22, hero.position.z + 10);
   view.update(dt, hero.position, world.occluders);
-  renderer.render(scene, view.camera);
+  if (state.quality === 'high') post.render(); else renderer.render(scene, view.camera);
 }
 
 function moveHero(dt) {
