@@ -1,7 +1,7 @@
 /* Точка входа: рендерер, загрузка, игровой цикл.
    Порядок кадра: ввод → герой → жители → взаимодействие → камера → отрисовка. */
 import * as THREE from 'three';
-import { HERO, NPCS, MOVE, DIALOGS, PROPS } from './config.js';
+import { HERO, SKINS, DEFAULT_SKIN, NPCS, MOVE, DIALOGS, PROPS } from './config.js';
 import { onProgress, preload, charUrl, envUrl, characterModel } from './assets.js';
 import { buildWorld } from './world.js';
 import { Character } from './character.js';
@@ -61,14 +61,9 @@ input.onAction = () => document.getElementById('btn-action').click();
 /* ---------- загрузка ---------- */
 async function start() {
   onProgress(ui.progress);
-  await preload([charUrl(HERO.model), ...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')]);
+  await preload([charUrl(SKINS[currentSkin()].model), ...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')]);
   state.world = await buildWorld(scene, renderer);
-  state.hero = new Character(await characterModel(HERO.model, HERO.keep), HERO);
-  scene.add(state.hero.object);
-  // «свет героя», как в Diablo: тёмную модель видно на тёмной земле и ночью
-  const heroLight = new THREE.PointLight(0xffd2a0, 6, 6, 1.6);
-  heroLight.position.set(0, 3.2, 0.6);
-  state.hero.object.add(heroLight);
+  await setSkin(currentSkin());
   for (const def of NPCS) {
     const npc = new Npc(await characterModel(def.model, def.keep), def);
     state.npcs.push(npc);
@@ -79,6 +74,37 @@ async function start() {
   ui.toast('Стрелки — движение, ⟲ ⟳ — поворот камеры', 3500);
   renderer.setAnimationLoop(frame);
 }
+
+/* ---------- облик героя ---------- */
+function currentSkin() {
+  let id = null;
+  try { id = localStorage.getItem('g3d-skin'); } catch (e) { /* приватный режим */ }
+  return SKINS[id] ? id : DEFAULT_SKIN;
+}
+
+/** Меняет модель героя, сохраняя место и направление */
+async function setSkin(id) {
+  const skin = SKINS[id], old = state.hero;
+  const pos = old ? { x: old.position.x, z: old.position.z, face: THREE.MathUtils.radToDeg(old.heading) } : HERO;
+  const hero = new Character(await characterModel(skin.model, skin.keep), { ...pos, height: skin.height });
+  // «свет героя», как в Diablo: героя видно на тёмной земле и ночью
+  const light = new THREE.PointLight(0xffd2a0, 6, 6, 1.6);
+  light.position.set(0, 3.2, 0.6);
+  hero.object.add(light);
+  if (old) scene.remove(old.object);
+  scene.add(hero.object);
+  state.hero = hero;
+  state.skin = id;
+  try { localStorage.setItem('g3d-skin', id); } catch (e) { /* приватный режим */ }
+}
+
+bind('btn-skin', async () => {
+  if (!state.hero || ui.dialogOpen) return;
+  const ids = Object.keys(SKINS), next = ids[(ids.indexOf(state.skin) + 1) % ids.length];
+  ui.toast('Смена облика…', 900);
+  await setSkin(next);
+  ui.toast(`Облик: ${SKINS[next].name}`);
+});
 
 /* ---------- кадр ---------- */
 const timer = new THREE.Timer();

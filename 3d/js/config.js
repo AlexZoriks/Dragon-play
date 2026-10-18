@@ -98,9 +98,14 @@ export const NPCS = [
   },
 ];
 
-/* Главный герой: Voidflame Reaper (Meshy). Пока без скелета — двигается покачиванием; после рига заработают анимации.
-   keep не нужен: у модели нет сменных предметов. height — рост в метрах (демон выше людей). */
-export const HERO = { model: 'Reaper', keep: [], x: 0.5, z: 9, face: 180, height: 2.15 };
+/* Главный герой и его облики (скины). Облик меняется кнопкой 🎭 и запоминается на устройстве.
+   keep — какие предметы модели видны; height — рост в метрах. */
+export const HERO = { x: 0.5, z: 9, face: 180 };
+export const SKINS = {
+  wanderer: { name: 'Странник', model: 'Rogue_Hooded', keep: ['Knife', 'Rogue_Cape'], height: 1.8 },
+  reaper: { name: 'Жнец Пустоты', model: 'Reaper', keep: [], height: 2.15 },
+};
+export const DEFAULT_SKIN = 'wanderer';
 
 /* Входы в здания: кнопка «Войти» появляется только у крыльца. local[0] — сдвиг вдоль фасада. */
 export const DOORS = [
