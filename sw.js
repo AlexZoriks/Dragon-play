@@ -1,4 +1,4 @@
-const V='dr-e78de4bf84',CORE=['./','index.html','g.6bccdb57da.js','s.b455bf34e2.css','manifest.webmanifest','icon-192.png'];
+const V='dr-166e4fc81b',CORE=['./','index.html','g.d00031aa5e.js','s.b455bf34e2.css','manifest.webmanifest','icon-192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V&&k.indexOf('dr-')===0).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET'||u.origin!==location.origin||u.pathname.endsWith('version.json'))return;
