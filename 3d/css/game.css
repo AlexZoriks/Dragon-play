@@ -1,0 +1,77 @@
+/* Хроники золотого дракона — 3D-пролог. Стиль панелей повторяет 2D-игру: тёмное дерево, золото, Georgia. */
+:root {
+  --ink: #f3e7c9;
+  --ink-dim: #c9b88f;
+  --gold: #d9a441;
+  --gold-hi: #ffd47a;
+  --panel: rgba(24, 18, 12, .92);
+  --panel-edge: #6b4a22;
+  --shadow: 0 6px 24px rgba(0, 0, 0, .55);
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #14110d; color: var(--ink);
+  font: 15px/1.4 Georgia, "Times New Roman", serif; user-select: none; -webkit-user-select: none; touch-action: none; }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* кнопки */
+.btn { display: inline-grid; place-items: center; border: 1px solid var(--panel-edge); background: var(--panel); color: var(--ink);
+  border-radius: 10px; box-shadow: var(--shadow); font: inherit; cursor: pointer; text-decoration: none; }
+.btn:active { transform: translateY(1px); border-color: var(--gold); }
+.btn--icon { width: 40px; height: 40px; font-size: 19px; }
+.btn--round { width: 46px; height: 46px; border-radius: 50%; font-size: 22px; }
+
+/* HUD */
+.hud { position: fixed; top: calc(8px + var(--safe-t)); left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r));
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; pointer-events: none; }
+.hud > * { pointer-events: auto; }
+.hud__place { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 10px; padding: 6px 12px; box-shadow: var(--shadow); }
+.hud__place b { display: block; color: var(--gold-hi); font-size: 15px; }
+.hud__place span { font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
+.hud__tools { display: flex; gap: 6px; }
+.zoom { position: fixed; right: calc(14px + var(--safe-r)); top: calc(70px + var(--safe-t)); display: grid; gap: 8px; }
+
+/* D-pad: стрелки, как во 2D-версии */
+.dpad { position: fixed; left: calc(18px + var(--safe-l)); bottom: calc(22px + var(--safe-b)); width: 150px; height: 150px;
+  display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr); gap: 4px; }
+.dpad button { border: 1px solid var(--panel-edge); background: var(--panel); color: var(--gold-hi); border-radius: 12px; font-size: 20px; box-shadow: var(--shadow); }
+.dpad button.is-held { background: #3a2a14; border-color: var(--gold); }
+.dpad [data-dir=up] { grid-area: 1 / 2; } .dpad [data-dir=left] { grid-area: 2 / 1; }
+.dpad [data-dir=right] { grid-area: 2 / 3; } .dpad [data-dir=down] { grid-area: 3 / 2; }
+.btn--run { position: fixed; right: calc(18px + var(--safe-r)); bottom: calc(118px + var(--safe-b)); opacity: .55; }
+.btn--run.is-on { opacity: 1; border-color: var(--gold); }
+
+/* кнопка действия появляется только рядом с тем, с чем можно взаимодействовать */
+.action { position: fixed; right: calc(18px + var(--safe-r)); bottom: calc(34px + var(--safe-b)); min-width: 132px; height: 62px; padding: 0 18px;
+  border-radius: 31px; border: 2px solid var(--gold); background: linear-gradient(#4a3518, #2a1d0d); color: var(--gold-hi);
+  font: 600 17px Georgia, serif; box-shadow: 0 0 18px rgba(217, 164, 65, .35), var(--shadow); }
+.action:active { transform: scale(.97); }
+
+/* диалог */
+.dialog { position: fixed; inset: auto 0 0 0; padding: 0 10px calc(12px + var(--safe-b)); display: flex; justify-content: center; }
+.dialog__box { width: min(560px, 100%); background: var(--panel); border: 1px solid var(--gold); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
+.dialog__head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.dialog__head b { color: var(--gold-hi); font-size: 17px; }
+.dialog__head small { color: var(--ink-dim); }
+.dialog p { margin: 0 0 12px; white-space: pre-line; }
+.dialog__answers { display: grid; gap: 6px; }
+.dialog__answers button { text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--panel-edge); background: #2b2013; color: var(--ink); font: inherit; }
+.dialog__answers button:active, .dialog__answers button:hover { border-color: var(--gold); }
+
+.toast { position: fixed; left: 50%; top: calc(64px + var(--safe-t)); transform: translateX(-50%); max-width: 90vw; background: var(--panel);
+  border: 1px solid var(--gold); border-radius: 10px; padding: 8px 14px; box-shadow: var(--shadow); text-align: center; }
+
+/* загрузка */
+.loader { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(#2a2016, #0d0a07); z-index: 10; transition: opacity .5s; }
+.loader.is-done { opacity: 0; pointer-events: none; }
+.loader__box { text-align: center; padding: 20px; }
+.loader h1 { margin: 0; color: var(--gold-hi); font-size: 24px; font-weight: 600; }
+.loader p { margin: 4px 0 18px; color: var(--ink-dim); }
+.loader__bar { width: 240px; height: 8px; border-radius: 4px; background: #2b2013; border: 1px solid var(--panel-edge); overflow: hidden; margin: 0 auto 8px; }
+.loader__bar i { display: block; height: 100%; width: 0; background: var(--gold); transition: width .2s; }
+
+[hidden] { display: none !important; }
+@media (min-width: 900px) { .dpad { opacity: .85; } }

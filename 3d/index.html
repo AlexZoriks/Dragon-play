@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#14110d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Хроники золотого дракона — 3D</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/game.css">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/": "./vendor/three/addons/"
+} }
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<!-- загрузка -->
+<div id="loader" class="loader">
+  <div class="loader__box">
+    <h1>Хроники золотого дракона</h1>
+    <p>Изумрудные луга · 3D-пролог</p>
+    <div class="loader__bar"><i id="loader-fill"></i></div>
+    <small id="loader-text">Загрузка…</small>
+  </div>
+</div>
+
+<!-- HUD -->
+<header class="hud">
+  <div class="hud__place"><b>Изумрудные луга</b><span>деревенская площадь · тест 3D</span></div>
+  <div class="hud__tools">
+    <button class="btn btn--icon" id="btn-cam-left" title="Повернуть камеру (Q)" aria-label="Повернуть камеру влево">⟲</button>
+    <button class="btn btn--icon" id="btn-cam-right" title="Повернуть камеру (E)" aria-label="Повернуть камеру вправо">⟳</button>
+    <button class="btn btn--icon" id="btn-quality" title="Качество графики" aria-label="Качество графики">⚙</button>
+    <a class="btn btn--icon" href="../" title="Вернуться в 2D-игру" aria-label="Вернуться в 2D-игру">✕</a>
+  </div>
+</header>
+
+<div class="zoom">
+  <button class="btn btn--round" id="btn-zoom-in" aria-label="Приблизить">+</button>
+  <button class="btn btn--round" id="btn-zoom-out" aria-label="Отдалить">−</button>
+</div>
+
+<!-- управление -->
+<div class="dpad" id="dpad" aria-label="Стрелки движения">
+  <button data-dir="up" aria-label="Вверх">▲</button>
+  <button data-dir="left" aria-label="Влево">◀</button>
+  <button data-dir="right" aria-label="Вправо">▶</button>
+  <button data-dir="down" aria-label="Вниз">▼</button>
+</div>
+<button class="btn btn--round btn--run is-on" id="btn-run" aria-label="Бег">🏃</button>
+<button class="action" id="btn-action" hidden></button>
+
+<!-- диалог -->
+<div class="dialog" id="dialog" hidden>
+  <div class="dialog__box">
+    <div class="dialog__head"><span id="dlg-icon"></span><b id="dlg-name"></b><small id="dlg-title"></small></div>
+    <p id="dlg-text"></p>
+    <div class="dialog__answers" id="dlg-answers"></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
