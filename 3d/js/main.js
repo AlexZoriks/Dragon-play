@@ -78,12 +78,18 @@ bind('btn-cam-left', () => view.rotateStep(-1));
 bind('btn-cam-right', () => view.rotateStep(1));
 bind('btn-zoom-in', () => view.zoom(1 / 1.2));
 bind('btn-zoom-out', () => view.zoom(1.2));
+bind('btn-attack', () => {
+  // удар: только если есть такая анимация и герой не в разговоре; ходьба не прерывает замах
+  if (!state.hero || ui.dialogOpen || state.hero.oneshot) return;
+  if (state.hero.actions?.attack) state.hero.playOnce('attack'); else state.hero.playOnce('cheer');
+});
 bind('btn-run', (e) => { state.run = !state.run; e.currentTarget.classList.toggle('is-on', state.run); });
 bind('btn-quality', () => { state.autoQ = false; applyQuality(ORDER[(ORDER.indexOf(state.quality) + 1) % ORDER.length]); });
 input.onRotateStep = (s) => view.rotateStep(s);
 input.onRotate = (deg) => view.rotateBy(deg);
 input.onZoom = (f) => view.zoom(f);
 input.onAction = () => document.getElementById('btn-action').click();
+input.onAttack = () => document.getElementById('btn-attack').click();
 
 /* ---------- загрузка ---------- */
 async function start() {
@@ -170,7 +176,8 @@ function frame() {
 
 function moveHero(dt) {
   const hero = state.hero, a = input.axis;
-  if (ui.dialogOpen || !a.active) { hero.speed = 0; return; }
+  // во время удара герой стоит на месте — иначе ноги «скользят»
+  if (ui.dialogOpen || !a.active || hero.state === 'attack') { hero.speed = 0; return; }
   const { forward, right } = view.basis();
   const dir = new THREE.Vector2().addScaledVector(right, a.x).addScaledVector(forward, -a.y).normalize();
   const speed = state.run ? MOVE.run : MOVE.walk;
@@ -222,3 +229,8 @@ function useDoor(door) {
 }
 
 start().catch((e) => { console.error(e); state.errors.push(String(e)); ui.fail('Не удалось загрузить: ' + e.message); });
+
+/* офлайн: после первого запуска игра открывается без интернета */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => { /* не критично */ }));
+}

@@ -5,10 +5,10 @@ export const HERO_HEIGHT = 1.8;          // единый рост: под нег
 export const ENV_SCALE = 4.5;             // масштаб зданий и природы из пака KayKit Medieval
 
 export const CAMERA = {
-  pitch: 52,            // наклон камеры, градусы от горизонта
-  distance: 16,         // расстояние до героя
-  minDistance: 8,
-  maxDistance: 30,
+  pitch: 46,            // наклон камеры, градусы от горизонта (ниже — герой крупнее и виден объём)
+  distance: 11,         // расстояние до героя: герой занимает ~1/5 высоты экрана
+  minDistance: 5,
+  maxDistance: 24,
   yawStep: 45,          // шаг поворота кнопками
   follow: 6,            // жёсткость следования (больше — быстрее)
 };
@@ -113,11 +113,12 @@ export const CHAR_MODE_DEFAULT = 'hd2d';
    keep — какие предметы модели видны; height — рост в метрах. */
 export const HERO = { x: 0.5, z: 9, face: 180 };
 export const SKINS = {
+  oni: { name: 'Они-самурай', model: 'Oni', keep: [], height: 1.95 },
   pixel: { name: 'Искатель приключений (пиксели)', sprite: 'hero' },
   wanderer: { name: 'Странник', model: 'Rogue_Hooded', keep: ['Knife', 'Rogue_Cape'], height: 1.8 },
   reaper: { name: 'Жнец Пустоты', model: 'Reaper', keep: [], height: 2.15 },
 };
-export const DEFAULT_SKIN = 'pixel';
+export const DEFAULT_SKIN = 'oni';
 
 /* Входы в здания: кнопка «Войти» появляется только у крыльца. local[0] — сдвиг вдоль фасада. */
 export const DOORS = [

@@ -10,6 +10,7 @@ export class Input {
   constructor({ dpad, canvas }) {
     this.held = new Set();
     this.onAction = null;
+    this.onAttack = null;
     this.onZoom = null;
     this.onRotate = null;         // (градусы)
     this.onRotateStep = null;     // (+1 / −1)
@@ -32,6 +33,7 @@ export class Input {
     addEventListener('keydown', (e) => {
       if (KEYS[e.code]) { this.held.add(KEYS[e.code]); e.preventDefault(); }
       else if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyF') { this.onAction?.(); e.preventDefault(); }
+      else if (e.code === 'KeyJ' || e.code === 'KeyX') this.onAttack?.();
       else if (e.code === 'KeyQ') this.onRotateStep?.(-1);
       else if (e.code === 'KeyE') this.onRotateStep?.(1);
     });

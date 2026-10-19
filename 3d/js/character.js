@@ -18,6 +18,8 @@ const CLIP = {
   interact: [/^interact$/i, /talk|gesture|interact/i],
   cheer: [/^cheer$/i, /cheer|roar|victory/i],
   hit: [/^hit_a$/i, /hit|react/i],
+  attack: [/^1h_melee_attack_chop$/i, /attack|slash|punch/i],
+  death: [/^death_a$/i, /death|dying/i],
 };
 const findClip = (clips, patterns) => {
   for (const re of patterns) { const c = clips.find((x) => re.test(x.name)); if (c) return c; }
@@ -30,7 +32,8 @@ export class Character {
     this.object = new THREE.Group();
     this.object.add(root);
     // единый рост: модель масштабируется так, чтобы любой персонаж был HERO_HEIGHT
-    const box = new THREE.Box3().setFromObject(root);
+    root.updateMatrixWorld(true);                 // скелет должен быть в позе привязки, иначе габариты неверные
+    const box = new THREE.Box3().setFromObject(root, true);
     const h = box.max.y - box.min.y || 1;
     root.scale.setScalar(height / h);
     root.position.y = -box.min.y * (height / h);
@@ -52,7 +55,7 @@ export class Character {
     // модель без скелета (временная, до рига): вместо анимаций — покачивание при ходьбе
     this.procedural = !this.actions.idle && !this.actions.walk;
     this.phase = 0;
-    for (const k of ['interact', 'cheer', 'hit']) {
+    for (const k of ['interact', 'cheer', 'hit', 'attack', 'death']) {
       const a = this.actions[k];
       if (a) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
     }

@@ -82,3 +82,6 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #14110d; col
   .hud__tools { gap: 4px; }
   .btn--icon { width: 38px; height: 38px; font-size: 17px; }
 }
+
+/* удар: над кнопкой бега */
+.btn--attack { position: fixed; right: calc(18px + var(--safe-r)); bottom: calc(176px + var(--safe-b)); }
