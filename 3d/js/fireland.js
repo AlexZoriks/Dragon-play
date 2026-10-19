@@ -135,27 +135,56 @@ function grainTexture() {
   return t;
 }
 
-/* --- лава: плоскость чуть ниже берегов, шейдер с текущими разводами; видна только в руслах --- */
+/* --- лава на текстурах ambientCG (CC0): Lava001 — остывающая корка, Lava005 — жидкая горячая лава.
+   Ближе к берегу — корка, к середине русла — горячая (маска расстояния до берега запекается в текстуру).
+   Течение без растягивания: два слоя со сдвигом по времени перетекают друг в друга (flow-crossfade).
+   Свечение берётся из карты Emission и усиливается выше 1 — его подхватывает bloom. --- */
 function makeLava() {
+  const L = new THREE.TextureLoader(), dir = 'assets/textures/lava/';
+  const tex = (f, srgb) => {
+    const t = L.load(dir + f); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  // маска: 0 — у берега, 1 — середина русла (по lavaDist), 256×256 на всю карту
+  const M = 256, data = new Uint8Array(M * M);
+  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
+    const x = (i + 0.5) / M * SIZE - HALF, z = (j + 0.5) / M * SIZE - HALF;
+    data[j * M + i] = Math.round(THREE.MathUtils.clamp(-lavaDist(x, z) / 1.6, 0, 1) * 255);
+  }
+  const mask = new THREE.DataTexture(data, M, M, THREE.RedFormat); mask.magFilter = mask.minFilter = THREE.LinearFilter; mask.needsUpdate = true;
+
   const geo = new THREE.PlaneGeometry(SIZE, SIZE, 1, 1); geo.rotateX(-Math.PI / 2);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { t: { value: 0 } },
+    uniforms: {
+      t: { value: 0 }, mask: { value: mask }, size: { value: SIZE },
+      cC: { value: tex('crust_color.jpg', true) }, cE: { value: tex('crust_emission.jpg', true) }, cN: { value: tex('crust_normal.jpg') },
+      hC: { value: tex('hot_color.jpg', true) }, hE: { value: tex('hot_emission.jpg', true) }, hN: { value: tex('hot_normal.jpg') },
+      sunDir: { value: new THREE.Vector3(-20, 18, -10).normalize() },
+    },
     fog: false,
     vertexShader: 'varying vec2 vP; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }',
     fragmentShader: `
-      uniform float t; varying vec2 vP;
-      float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float n(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.0-2.0*f);
-        return mix(mix(h(i), h(i+vec2(1,0)), u.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), u.x), u.y); }
-      float fbm(vec2 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ s += a*n(p); p *= 2.03; a *= 0.5; } return s; }
-      void main(){
-        vec2 p = vP * 0.35 + vec2(t * 0.05, t * 0.02);
-        float f = fbm(p + fbm(p * 1.7 - t * 0.08));
-        float crust = smoothstep(0.47, 0.62, f);                    // остывшая тёмная корка
-        vec3 hot = mix(vec3(0.45, 0.04, 0.005), vec3(1.1, 0.28, 0.02), smoothstep(0.25, 0.6, 1.0 - f)); // значения линейные: после sRGB это насыщенный красно-оранжевый
-        vec3 col = mix(hot, vec3(0.02, 0.006, 0.004), crust);        // только самые яркие прожилки дают свечение
-        col *= 0.9 + 0.1 * sin(t * 2.0 + f * 12.0);
-        gl_FragColor = vec4(col, 1.0);
+      uniform float t, size; uniform sampler2D mask, cC, cE, cN, hC, hE, hN; uniform vec3 sunDir; varying vec2 vP;
+      // два слоя течения со сдвигом фазы: пока один «растягивается», второй его плавно заменяет
+      vec3 flowTex(sampler2D s, vec2 uv, vec2 dir, float speed) {
+        float p0 = fract(t * speed), p1 = fract(t * speed + 0.5);
+        float w = abs(p0 - 0.5) * 2.0;
+        return mix(texture2D(s, uv + dir * p0).rgb, texture2D(s, uv + dir * p1 + 0.37).rgb, w);
+      }
+      void main() {
+        float m = texture2D(mask, vP / size + 0.5).r;               // 0 у берега … 1 в середине
+        vec2 uv = vP * 0.16;
+        vec2 dir = vec2(0.35, 0.12);
+        vec3 crC = flowTex(cC, uv, dir * 0.6, 0.03), crE = flowTex(cE, uv, dir * 0.6, 0.03), crN = flowTex(cN, uv, dir * 0.6, 0.03);
+        vec3 hoC = flowTex(hC, uv * 0.8, dir, 0.06), hoE = flowTex(hE, uv * 0.8, dir, 0.06), hoN = flowTex(hN, uv * 0.8, dir, 0.06);
+        float k = smoothstep(0.15, 0.85, m);
+        vec3 col = mix(crC, hoC, k), emi = mix(crE, hoE, k);
+        vec3 n = normalize(mix(crN, hoN, k) * 2.0 - 1.0); n = normalize(vec3(n.x, n.z, -n.y));   // карта нормалей → мировой Y вверх
+        float lit = 0.25 + 0.75 * max(dot(n, sunDir), 0.0);
+        float pulse = 0.9 + 0.1 * sin(t * 1.7 + vP.x * 0.3 + vP.y * 0.2);
+        vec3 c = col * lit * 0.35 + emi * (1.6 + 0.8 * k) * pulse;    // яркие прожилки >1 светятся через bloom
+        gl_FragColor = vec4(c, 1.0);
       }`,
   });
   const mesh = new THREE.Mesh(geo, mat);
@@ -164,32 +193,50 @@ function makeLava() {
   return { mesh, update: (t) => { mat.uniforms.t.value = t; } };
 }
 
-/* --- пепел и искры: 500 частиц вокруг героя, медленно падают и кружатся --- */
-function makeAsh() {
-  const N = 500, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), R = 22;
+/* --- пепел и искры. Частицы живут в мире (не едут вместе с героем): когда частица уходит
+   дальше R от героя, она переносится на противоположную сторону — так облако всегда вокруг,
+   но при беге герой проходит сквозь него. Мягкие круглые точки, а не квадраты; искры — редкие и тёплые. --- */
+function softDot() {
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,0.5)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
+}
+function makeCloud(N, R, color, size, opts) {
+  const pos = new Float32Array(N * 3), seed = new Float32Array(N);
   for (let i = 0; i < N; i++) {
-    pos[i * 3] = (Math.random() - 0.5) * R * 2; pos[i * 3 + 1] = Math.random() * 10; pos[i * 3 + 2] = (Math.random() - 0.5) * R * 2;
-    const ember = Math.random() < 0.25;
-    (ember ? new THREE.Color(1.6, 0.6, 0.15) : new THREE.Color(0.35, 0.33, 0.32)).toArray(col, i * 3);
+    pos[i * 3] = (Math.random() - 0.5) * R * 2; pos[i * 3 + 1] = Math.random() * 8; pos[i * 3 + 2] = (Math.random() - 0.5) * R * 2;
+    seed[i] = Math.random() * 100;
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const points = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.08, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
-  points.frustumCulled = false; points.userData.noAO = true;
-  let t = 0;
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ size, map: softDot(), color, transparent: true, depthWrite: false, sizeAttenuation: true, ...opts });
+  const points = new THREE.Points(geo, mat); points.frustumCulled = false; points.userData.noAO = true;
+  return { points, pos, seed, N, R, geo };
+}
+function makeAsh() {
+  const ash = makeCloud(260, 18, 0x8a8480, 0.06, { opacity: 0.55 });
+  const sparks = makeCloud(70, 14, 0xff8a30, 0.07, { opacity: 0.95, blending: THREE.AdditiveBlending });
+  const group = new THREE.Group(); group.add(ash.points, sparks.points);
+  let t = 0, hx = 0, hz = 0;
+  const step = (c, dt, fall, rise) => {
+    const { pos, seed, N, R } = c;
+    for (let i = 0; i < N; i++) {
+      const s = seed[i], k = i * 3;
+      pos[k] += Math.sin(t * 0.6 + s) * dt * 0.35;
+      pos[k + 2] += Math.cos(t * 0.5 + s * 1.3) * dt * 0.35;
+      pos[k + 1] += (rise ? 0.6 + (s % 1) * 0.6 : -(fall + (s % 1) * 0.25)) * dt;
+      if (pos[k + 1] < 0) pos[k + 1] += 8; if (pos[k + 1] > 8) pos[k + 1] -= 8;
+      // перенос через край облака вокруг героя
+      if (pos[k] - hx > R) pos[k] -= 2 * R; else if (pos[k] - hx < -R) pos[k] += 2 * R;
+      if (pos[k + 2] - hz > R) pos[k + 2] -= 2 * R; else if (pos[k + 2] - hz < -R) pos[k + 2] += 2 * R;
+    }
+    c.geo.attributes.position.needsUpdate = true;
+  };
   return {
-    points,
-    update(dt) {
-      t += dt;
-      for (let i = 0; i < N; i++) {
-        pos[i * 3 + 1] -= dt * (0.25 + (i % 7) * 0.05);
-        pos[i * 3] += Math.sin(t * 0.7 + i) * dt * 0.3;
-        if (pos[i * 3 + 1] < 0) pos[i * 3 + 1] += 10;
-      }
-      geo.attributes.position.needsUpdate = true;
-    },
-    follow(x, z) { points.position.set(x, 0, z); },
+    points: group,
+    update(dt) { t += dt; step(ash, dt, 0.18, false); step(sparks, dt, 0, true); sparks.points.material.opacity = 0.75 + 0.2 * Math.sin(t * 3); },
+    follow(x, z) { hx = x; hz = z; },
   };
 }
 

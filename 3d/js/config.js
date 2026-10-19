@@ -115,8 +115,8 @@ export const HERO = { x: 0.5, z: 9, face: 180 };
 export const SKINS = {
   oni: {
     name: 'Они-самурай', model: 'Oni', keep: [], height: 1.95,
-    // огненный двуручник в правой руке; rot/offset — посадка рукояти в кисти Mixamo-скелета
-    weapon: { model: 'FireSword', bone: 'RightHand$', length: 1.5, grip: 0.82, rot: [90, 0, 0], offset: [0, 0.06, 0], fire: true },
+    // огненный двуручник в правой руке: клинок вперёд и чуть вниз (в A-позе), рукоять — в ладони
+    weapon: { model: 'FireSword', bone: 'RightHand$', length: 1.5, grip: 0.82, aim: [0, -0.25, 1], offset: [0, 0.07, 0], fire: true },
   },
   pixel: { name: 'Искатель приключений (пиксели)', sprite: 'hero' },
   wanderer: { name: 'Странник', model: 'Rogue_Hooded', keep: ['Knife', 'Rogue_Cape'], height: 1.8 },

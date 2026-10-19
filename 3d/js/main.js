@@ -30,7 +30,8 @@ const post = new PostFx(renderer, scene, view.camera);
 const input = new Input({ dpad: document.getElementById('dpad'), canvas });
 const state = { autoQ: true, run: true, quality: 'medium', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0 };
 window.__g3d = state;                       // для автотестов
-state.setGrip = (rot, off) => { const g = state.weapon.grip; g.rotation.set(...rot.map((a) => a * Math.PI / 180)); if (off) g.position.set(...off); };
+state.view = view;
+state.setGrip = (rot, off, order = 'YXZ') => { const g = state.weapon.grip; g.rotation.set(...rot.map((a) => a * Math.PI / 180), order); if (off) g.position.set(...off); };
 addEventListener('error', (e) => state.errors.push(String(e.message)));
 
 /* Качество графики: три уровня. На телефоне по умолчанию «среднее»; если кадров мало — понижается само.
