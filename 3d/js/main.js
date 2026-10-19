@@ -24,15 +24,47 @@ const scene = new THREE.Scene();
 const view = new FollowCamera(innerWidth / innerHeight);
 const post = new PostFx(renderer, scene, view.camera);
 const input = new Input({ dpad: document.getElementById('dpad'), canvas });
-const state = { run: true, quality: 'high', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0 };
+const state = { autoQ: true, run: true, quality: 'medium', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0 };
 window.__g3d = state;                       // для автотестов
 addEventListener('error', (e) => state.errors.push(String(e.message)));
 
+/* Качество графики: три уровня. На телефоне по умолчанию «среднее»; если кадров мало — понижается само.
+   high   — чёткость до 2×, тени 2048, затенение углов (GTAO), свечение, цвет и «миниатюра»;
+   medium — чёткость до 1.5×, тени 1024, только цвет и «миниатюра» (самое дорогое выключено);
+   low    — чёткость 1×, без теней и постобработки. */
+const QUALITY = {
+  high: { name: 'высокое', dpr: 2, shadow: 2048, ao: true, bloom: true, post: true },
+  medium: { name: 'среднее', dpr: 1.5, shadow: 1024, ao: false, bloom: false, post: true },
+  low: { name: 'экономное', dpr: 1, shadow: 0, ao: false, bloom: false, post: false },
+};
+const ORDER = ['high', 'medium', 'low'];
+state.quality = initialQuality();
+function initialQuality() {
+  try { const q = localStorage.getItem('g3d-quality'); if (QUALITY[q]) return q; } catch (e) { /* приватный режим */ }
+  return matchMedia('(pointer: coarse)').matches ? 'medium' : 'high';
+}
+function applyQuality(q, announce = true) {
+  state.quality = q;
+  const Q = QUALITY[q];
+  const wantShadows = Q.shadow > 0;
+  if (renderer.shadowMap.enabled !== wantShadows) {
+    renderer.shadowMap.enabled = wantShadows;
+    scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); });
+  }
+  const sun = state.world?.lights.sun;
+  if (sun && wantShadows && sun.shadow.mapSize.x !== Q.shadow) {
+    sun.shadow.mapSize.set(Q.shadow, Q.shadow); sun.shadow.map?.dispose(); sun.shadow.map = null;
+  }
+  post.ao.enabled = Q.ao; post.bloom.enabled = Q.bloom;
+  try { localStorage.setItem('g3d-quality', q); } catch (e) { /* приватный режим */ }
+  resize();
+  if (announce) ui.toast(`Качество: ${Q.name}`);
+}
+
 function resize() {
-  const q = state.quality === 'high' ? Math.min(devicePixelRatio, 2) : 1;
+  const q = Math.min(devicePixelRatio, QUALITY[state.quality].dpr);
   renderer.setPixelRatio(q);
   renderer.setSize(innerWidth, innerHeight, false);
-  // постобработка дорогая на телефоне: рисуем её не выше чем в 1.5× плотности
   post.setSize(innerWidth, innerHeight, Math.min(q, 1.5));
   view.camera.aspect = innerWidth / innerHeight;
   view.camera.updateProjectionMatrix();
@@ -47,13 +79,7 @@ bind('btn-cam-right', () => view.rotateStep(1));
 bind('btn-zoom-in', () => view.zoom(1 / 1.2));
 bind('btn-zoom-out', () => view.zoom(1.2));
 bind('btn-run', (e) => { state.run = !state.run; e.currentTarget.classList.toggle('is-on', state.run); });
-bind('btn-quality', () => {
-  state.quality = state.quality === 'high' ? 'low' : 'high';
-  renderer.shadowMap.enabled = state.quality === 'high';
-  scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
-  resize();
-  ui.toast(state.quality === 'high' ? 'Качество: высокое (тени, объёмный свет, цвет)' : 'Качество: экономное (без теней и эффектов)');
-});
+bind('btn-quality', () => { state.autoQ = false; applyQuality(ORDER[(ORDER.indexOf(state.quality) + 1) % ORDER.length]); });
 input.onRotateStep = (s) => view.rotateStep(s);
 input.onRotate = (deg) => view.rotateBy(deg);
 input.onZoom = (f) => view.zoom(f);
@@ -73,6 +99,7 @@ async function start() {
     scene.add(npc.object);
   }
   view.focus.set(HERO.x, 1, HERO.z);
+  applyQuality(state.quality, false);
   ui.loaded();
   ui.toast('Стрелки — движение, ⟲ ⟳ — поворот камеры', 3500);
   renderer.setAnimationLoop(frame);
@@ -113,12 +140,20 @@ bind('btn-skin', async () => {
 
 /* ---------- кадр ---------- */
 const timer = new THREE.Timer();
-let fpsT = 0, fpsN = 0;
+let fpsT = 0, fpsN = 0, slow = 0;
 
 function frame() {
   timer.update();
   const dt = Math.min(timer.getDelta(), 1 / 20);
-  fpsT += dt; fpsN++; if (fpsT > 1) { state.fps = Math.round(fpsN / fpsT); fpsT = 0; fpsN = 0; }
+  fpsT += dt; fpsN++;
+  if (fpsT > 1) {
+    state.fps = Math.round(fpsN / fpsT); fpsT = 0; fpsN = 0;
+    // авто-понижение: 3 секунды подряд меньше 28 кадров — на ступень ниже (только вниз и только пока игрок сам не выбрал)
+    slow = state.fps < 28 ? slow + 1 : 0;
+    if (slow >= 3 && state.autoQ && state.quality !== 'low' && !navigator.webdriver) {
+      slow = 0; applyQuality(ORDER[ORDER.indexOf(state.quality) + 1]);
+    }
+  }
   const { hero, npcs, world } = state;
 
   moveHero(dt);
@@ -130,7 +165,7 @@ function frame() {
   sun.target.position.set(hero.position.x, 0, hero.position.z);
   sun.position.set(hero.position.x - 18, 22, hero.position.z + 10);
   view.update(dt, hero.position, world.occluders);
-  if (state.quality === 'high') post.render(); else renderer.render(scene, view.camera);
+  if (QUALITY[state.quality].post) post.render(); else renderer.render(scene, view.camera);
 }
 
 function moveHero(dt) {
