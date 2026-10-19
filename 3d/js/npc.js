@@ -5,12 +5,14 @@
    - Над жителем, с которым можно поговорить, висит «!» — пока с ним ещё не говорили. */
 import * as THREE from 'three';
 import { Character } from './character.js';
+import { SpriteCharacter } from './sprite.js';
 
 const NOTICE_NEAR = 4, STOP_NEAR = 2.5, WALK = 1.4;
 
-export class Npc extends Character {
-  constructor(model, def) {
-    super(model, { x: def.x, z: def.z, face: def.face ?? 180 });
+/* Поведение одно и то же для 3D-модели и для пиксельного спрайта (HD-2D) */
+const withNpc = (Base) => class extends Base {
+  constructor(model, def, camera) {
+    super(model, { x: def.x, z: def.z, face: def.face ?? 180 }, camera);
     this.def = def;
     this.home = THREE.MathUtils.degToRad(def.face ?? 180);
     this.wp = 0;
@@ -44,7 +46,10 @@ export class Npc extends Character {
     colliders.resolve(this.position, 0.35);
     this.faceTowards(tx, tz, dt, 6);
   }
-}
+};
+
+export const Npc = withNpc(Character);
+export const SpriteNpc = withNpc(SpriteCharacter);
 
 function makeMarker() {
   const c = document.createElement('canvas'); c.width = c.height = 64;

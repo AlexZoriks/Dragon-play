@@ -86,26 +86,38 @@ export const HORIZON = [
 /* Жители. model — файл в assets/models/chars; keep — какие предметы в руках видны. */
 export const NPCS = [
   {
-    id: 'elder', model: 'Mage', keep: ['2H_Staff', 'Mage_Hat'], x: -3, z: 2.5, face: 200,
+    id: 'elder', sprite: 'elder', model: 'Mage', keep: ['2H_Staff', 'Mage_Hat'], x: -3, z: 2.5, face: 200,
     name: 'Староста Ульрих', title: 'Глава деревни', icon: '📜',
     talk: 'elder',
   },
   {
-    id: 'guard', model: 'Knight', keep: ['1H_Sword', 'Badge_Shield', 'Knight_Helmet'], x: 6, z: 3,
+    id: 'guard', sprite: 'guard', model: 'Knight', keep: ['1H_Sword', 'Badge_Shield', 'Knight_Helmet'], x: 6, z: 3,
     name: 'Капитан Бруно', title: 'Начальник стражи', icon: '🛡️',
     patrol: [[6, 3], [6, -4], [-4, -5], [-5, 6], [4, 7]],
     talk: 'guard',
   },
+  {
+    id: 'marta', sprite: 'marta', model: 'Mage', keep: [], x: -6.4, z: -2.6, face: 150,
+    name: 'Марта', title: 'Хозяйка таверны', icon: '🍺', talk: 'marta',
+  },
+  {
+    id: 'kael', sprite: 'kael', model: 'Knight', keep: ['1H_Sword'], x: 7.5, z: -5.5, face: 220,
+    name: 'Каэль', title: 'Странствующий мечник', icon: '⚔️', talk: 'kael',
+  },
 ];
+
+/* Режим отрисовки персонажей: 'hd2d' — пиксельные спрайты в 3D-мире (как Dragon Quest HD-2D), '3d' — 3D-модели */
+export const CHAR_MODE_DEFAULT = 'hd2d';
 
 /* Главный герой и его облики (скины). Облик меняется кнопкой 🎭 и запоминается на устройстве.
    keep — какие предметы модели видны; height — рост в метрах. */
 export const HERO = { x: 0.5, z: 9, face: 180 };
 export const SKINS = {
+  pixel: { name: 'Искатель приключений (пиксели)', sprite: 'hero' },
   wanderer: { name: 'Странник', model: 'Rogue_Hooded', keep: ['Knife', 'Rogue_Cape'], height: 1.8 },
   reaper: { name: 'Жнец Пустоты', model: 'Reaper', keep: [], height: 2.15 },
 };
-export const DEFAULT_SKIN = 'wanderer';
+export const DEFAULT_SKIN = 'pixel';
 
 /* Входы в здания: кнопка «Войти» появляется только у крыльца. local[0] — сдвиг вдоль фасада. */
 export const DOORS = [
@@ -114,6 +126,34 @@ export const DOORS = [
 
 /* Диалоги. Узел: text + answers [текст, следующий узел | null, действие?] */
 export const DIALOGS = {
+  marta: {
+    start: {
+      text: 'Заходи, заходи! У «Пьяного гуся» всегда найдётся тёплая похлёбка и место у огня.\nДа ты, гляжу, не местный — по глазам видно.',
+      answers: [['Какие новости?', 'news'], ['Позже зайду.', null]],
+    },
+    news: {
+      text: 'Каэль вернулся с перевала, весь в саже. Говорит, на юге земля горит — огненные бесы лезут из трещин.',
+      answers: [['Огненные бесы?', 'fire'], ['Спасибо, Марта.', null]],
+    },
+    fire: {
+      text: 'Сама не видела и видеть не хочу. Спроси Каэля — он у дома старосты, точит меч.',
+      answers: [['Найду его.', null]],
+    },
+  },
+  kael: {
+    start: {
+      text: 'А, это ты. Вовремя.\nЗа южным перевалом земля треснула, из трещин течёт лава. Я видел там тварей из огня.',
+      answers: [['Покажешь дорогу?', 'road', 'cheer'], ['Звучит опасно.', 'danger']],
+    },
+    road: {
+      text: 'Скоро. Сначала соберись: зелья, хорошая броня. Там жарко — во всех смыслах.',
+      answers: [['Договорились.', null]],
+    },
+    danger: {
+      text: 'Опасно. Поэтому и иду не один.',
+      answers: [['Я с тобой.', 'road', 'cheer']],
+    },
+  },
   elder: {
     start: {
       text: 'Ты всё-таки пришёл в себя. Добро пожаловать на Изумрудные луга, путник.\nНочью на кладбище снова выли. Мне нужен кто-то, кто не боится темноты.',

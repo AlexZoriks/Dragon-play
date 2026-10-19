@@ -1,11 +1,12 @@
 /* Точка входа: рендерер, загрузка, игровой цикл.
    Порядок кадра: ввод → герой → жители → взаимодействие → камера → отрисовка. */
 import * as THREE from 'three';
-import { HERO, SKINS, DEFAULT_SKIN, NPCS, MOVE, DIALOGS, PROPS } from './config.js';
+import { HERO, SKINS, DEFAULT_SKIN, NPCS, MOVE, DIALOGS, PROPS, CHAR_MODE_DEFAULT } from './config.js';
 import { onProgress, preload, charUrl, envUrl, characterModel } from './assets.js';
 import { buildWorld } from './world.js';
 import { Character } from './character.js';
-import { Npc } from './npc.js';
+import { Npc, SpriteNpc } from './npc.js';
+import { SpriteCharacter, loadSprite } from './sprite.js';
 import { FollowCamera } from './camera.js';
 import { Input } from './input.js';
 import { ui } from './ui.js';
@@ -61,11 +62,13 @@ input.onAction = () => document.getElementById('btn-action').click();
 /* ---------- загрузка ---------- */
 async function start() {
   onProgress(ui.progress);
-  await preload([charUrl(SKINS[currentSkin()].model), ...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')]);
+  await preload([...(SKINS[currentSkin()].model ? [charUrl(SKINS[currentSkin()].model)] : []), ...(CHAR_MODE_DEFAULT === '3d' ? NPCS.map((n) => charUrl(n.model)) : []), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')]);
   state.world = await buildWorld(scene, renderer);
   await setSkin(currentSkin());
   for (const def of NPCS) {
-    const npc = new Npc(await characterModel(def.model, def.keep), def);
+    const npc = CHAR_MODE_DEFAULT === 'hd2d' && def.sprite
+      ? new SpriteNpc(await loadSprite(def.sprite), def, view.camera)
+      : new Npc(await characterModel(def.model, def.keep), def);
     state.npcs.push(npc);
     scene.add(npc.object);
   }
@@ -86,7 +89,9 @@ function currentSkin() {
 async function setSkin(id) {
   const skin = SKINS[id], old = state.hero;
   const pos = old ? { x: old.position.x, z: old.position.z, face: THREE.MathUtils.radToDeg(old.heading) } : HERO;
-  const hero = new Character(await characterModel(skin.model, skin.keep), { ...pos, height: skin.height });
+  const hero = skin.sprite
+    ? new SpriteCharacter(await loadSprite(skin.sprite), pos, view.camera)
+    : new Character(await characterModel(skin.model, skin.keep), { ...pos, height: skin.height });
   // «свет героя», как в Diablo: героя видно на тёмной земле и ночью
   const light = new THREE.PointLight(0xffd2a0, 6, 6, 1.6);
   light.position.set(0, 3.2, 0.6);
