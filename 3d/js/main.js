@@ -138,8 +138,8 @@ async function start() {
   await preload([...(SKINS[currentSkin()].model ? [charUrl(SKINS[currentSkin()].model)] : []), ...(village ? [] : [charUrl(BOSS_DEF.model)]),
     ...(village ? [...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')] : [])]);
   state.world = village ? await buildWorld(scene, renderer)
-    : state.loc === 'arena' ? await buildArena(scene, renderer) : await buildFireland(scene, renderer);
-  if (!village) Object.assign(HERO, { x: 0, z: 3, face: 180 });
+    : state.loc === 'arena' ? await buildArena(scene, renderer) : await buildFireland(scene, renderer, { quality: state.quality });
+  if (!village) Object.assign(HERO, state.world.start || { x: 0, z: 3, face: 180 });
   // мини-карта: снимок локации сверху — до героя и босса, чтобы их не было на фоне
   if (state.world.size) state.minimap = new Minimap(document.getElementById('minimap'), captureMap(renderer, scene, state.world.size), state.world.size);
   await setSkin(currentSkin());
@@ -193,6 +193,7 @@ bind('btn-skin', async () => {
 /* ---------- бой с боссом ---------- */
 async function spawnBoss(at) {
   const boss = await Boss.create(BOSS_DEF, at);
+  boss.world = state.world;
   scene.add(boss.object);
   state.boss = boss;
   boss.onHitHero = (dmg) => hurtHero(dmg);
@@ -282,6 +283,7 @@ function moveHero(dt) {
   const p = hero.position, ox = p.x, oz = p.z;
   p.x += dir.x * speed * dt; p.z += dir.y * speed * dt;
   state.world.colliders.resolve(p, MOVE.radius);
+  climbLimit(p, ox, oz, state.world);
   for (const n of state.npcs) {                          // жители тоже препятствия
     const dx = p.x - n.position.x, dz = p.z - n.position.z, d = Math.hypot(dx, dz), min = MOVE.radius + 0.35;
     if (d < min && d > 0) { p.x = n.position.x + (dx / d) * min; p.z = n.position.z + (dz / d) * min; }
@@ -293,6 +295,17 @@ function moveHero(dt) {
   }
   hero.speed = Math.hypot(p.x - ox, p.z - oz) / dt;      // реальная скорость: упёрся в стену — анимация замедляется
   hero.turnTo(Math.atan2(dir.x, dir.y), dt, MOVE.turn);
+}
+
+/** Слишком крутой подъём не пройти: откатываем шаг (сначала пробуем скользить вдоль склона по одной оси) */
+function climbLimit(p, ox, oz, world) {
+  const H = world.heightAt, max = world.maxSlope;
+  if (!H || !max) return;
+  const h0 = H(ox, oz), steep = (x, z) => { const d = Math.hypot(x - ox, z - oz); return d > 1e-4 && (H(x, z) - h0) / d > max; };
+  if (!steep(p.x, p.z)) return;
+  if (!steep(p.x, oz)) { p.z = oz; return; }
+  if (!steep(ox, p.z)) { p.x = ox; return; }
+  p.x = ox; p.z = oz;
 }
 
 /* ---------- взаимодействие: ближайшее в радиусе, кнопка появляется только тогда ---------- */

@@ -214,9 +214,13 @@ export class Boss {
   }
 
   move(speed, dt, colliders) {
-    const p = this.position;
+    const p = this.position, ox = p.x, oz = p.z;
     p.x += Math.sin(this.heading) * speed * dt; p.z += Math.cos(this.heading) * speed * dt;
     colliders?.resolve(p, this.def.radius);
+    if (this.world?.maxSlope && this.world.heightAt) {                 // как и герой, не лезет на крутые склоны
+      const H = this.world.heightAt, d = Math.hypot(p.x - ox, p.z - oz);
+      if (d > 1e-4 && (H(p.x, p.z) - H(ox, oz)) / d > this.world.maxSlope) { p.x = ox; p.z = oz; }
+    }
     const a = this.actions[this.curKey];                       // темп шагов — под скорость, без «скольжения»
     if (a && (this.curKey === 'walk' || this.curKey === 'run')) a.timeScale = THREE.MathUtils.clamp(speed / (this.curKey === 'run' ? this.def.run : this.def.walk), 0.4, 1.3);
   }

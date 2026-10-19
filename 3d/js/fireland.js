@@ -1,29 +1,44 @@
-/* Огненные земли — первая локация нового 3D-мира.
-   Всё, кроме моделей из Meshy, строится кодом:
-   - рельеф из шума (холмы по краям, ровная середина для боя), трещины и русла лавы;
-   - лава — свой шейдер: течёт, пульсирует, светится (её подхватывает bloom);
-   - тёмное небо в дыму, красно-оранжевый туман, пепел и искры в воздухе;
-   - свет без точечных ламп: низкое багровое «солнце» + отсвет лавы снизу (полусферический свет).
-   Модели скал/деревьев/руин добавляются из assets/models/fire/*.glb, если они есть (см. FIRE_PROPS). */
+/* Огненные земли — первая локация 3D-мира, 200 × 200 м (план: зоны A–K, см. «План Огненных земель»).
+   Всё, кроме моделей Meshy, строится кодом:
+   - рельеф: пологие холмы, горы по краю карты, вулкан с жерлом на северо-востоке и тропа-подъём к нему;
+   - две лавовые реки: главная с запада на восток и лавопад с вулкана; переход на север — по двум перешейкам;
+   - земля — смесь 4 фото-материалов Poly Haven по правилам (пепел, гравий троп, скала на склонах,
+     потрескавшаяся земля у лавы) с рельефом поверхности и тлеющими трещинами у берегов;
+   - лава — свой шейдер; пепел и искры вокруг героя; огненное небо (HDRI) для отражений.
+   Герой не может взойти на слишком крутой склон (см. main.js) — так вулкан проходим только по тропе. */
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { Colliders } from './collision.js';
 import { loadGltf, sharpen } from './assets.js';
 
-const SIZE = 90, SEG = 180, HALF = SIZE / 2;
+const SIZE = 200, HALF = SIZE / 2, SEG = 200;              // сетка рельефа — 1 м
+export const FIRE_START = { x: 0, z: 72, face: 180 };       // Пепельная поляна, лицом на север
 
-/* Русла лавы: ломаные (x, z), ширина */
+/* Лавовые реки: ломаные (x, z) от истока к устью, полуширина w. Лавопад стекает с вулкана. */
 const LAVA = [
-  { w: 2.6, pts: [[-45, -18], [-30, -14], [-18, -20], [-8, -16], [2, -22], [14, -19], [28, -26], [45, -24]] },
-  { w: 1.8, pts: [[22, 45], [18, 30], [24, 18], [20, 8], [30, 2], [45, 4]] },
+  { w: 4, pts: [[-106, 14], [-70, 6], [-45, 12], [-20, 2], [5, 10], [25, 4], [45, 14], [70, 6], [106, 12]] },
+  { w: 2.6, pts: [[54, -64], [51, -50], [47, -36], [38, -22], [30, -8], [25, 4]], fall: true },   // из-под кромки жерла
 ];
-/* Мосты-перешейки через лаву (по ним можно пройти) */
-const BRIDGES = [[-8, -16], [20, 10]];
+const LAVA_Y = -0.3;                                         // уровень главной реки
+const BRIDGES = [[-45, 12], [45, 14]];                       // Западный и Восточный перешейки
+/* Тропы по плану (усыпаны гравием) */
+const PATHS = [
+  [[0, 98], [0, 72], [-30, 60], [-58, 48], [-50, 30], [-45, 12], [-52, -8], [-62, -30]],
+  [[-62, -30], [-40, -38], [-12, -32]],
+  [[0, 72], [30, 68], [55, 64]],
+  [[55, 64], [50, 40], [45, 14], [52, -4], [62, -20], [64, -34]],
+];
+/* Вулкан: плоское дно жерла (арена босса), кромка кратера, склоны; подъём — расщелина по тропе лавопадов */
+const V = { x: 68, z: -72, floorR: 11, floorY: 14, rimR: 15, rimY: 21, fall: 12 };
+const RAMP = [[64, -34, 3], [66, -48, 7.5], [68, -61, 14]];      // точки подъёма: x, z, высота тропы
+export const LAIR = { x: 68, z: -74, face: 0 };             // логово демона на дне жерла, лицом к входу
 
-/* Модели из Meshy: имя файла → где стоят. Отсутствующие файлы пропускаются. */
-export const FIRE_PROPS = [
-  { model: 'rock_big', at: [[-14, 6, 20, 1.3], [16, -6, 140, 1.1], [-26, 22, 260, 1.5], [28, 24, 80, 1.4], [-34, -4, 10, 1.6], [6, 30, 200, 1.2]], col: 1.6 },
+/* Модели из Meshy: что и сколько расставить. Отсутствующие файлы пропускаются. */
+const FIRE_PROPS = [
+  { model: 'rock_big', count: 18, scale: [0.9, 1.9], col: 1.6, base: 3.2 },
 ];
+/* Центры зон — там не ставим случайные скалы (место под постройки и бой) */
+const ZONES = [[0, 72, 14], [55, 64, 15], [-58, 48, 12], [-62, -30, 16], [-12, -32, 16], [62, -20, 12], [68, -72, 26]];
 
 function hash(x, z) { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, z) {
@@ -33,117 +48,294 @@ function vnoise(x, z) {
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
 function fbm(x, z) { let s = 0, a = 0.5, f = 1; for (let i = 0; i < 4; i++) { s += a * vnoise(x * f, z * f); f *= 2; a *= 0.5; } return s; }
+const { smoothstep, lerp, clamp } = THREE.MathUtils;
 
+function segDist(x, z, ax, az, bx, bz) {
+  const vx = bx - ax, vz = bz - az;
+  const t = clamp(((x - ax) * vx + (z - az) * vz) / (vx * vx + vz * vz || 1), 0, 1);
+  return [Math.hypot(x - ax - vx * t, z - az - vz * t), t];
+}
 function distToPolyline(x, z, pts) {
   let best = 1e9;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, az] = pts[i], [bx, bz] = pts[i + 1], vx = bx - ax, vz = bz - az;
-    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / (vx * vx + vz * vz)));
-    best = Math.min(best, Math.hypot(x - ax - vx * t, z - az - vz * t));
-  }
+  for (let i = 0; i < pts.length - 1; i++) best = Math.min(best, segDist(x, z, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])[0]);
   return best;
 }
-/** <0 — внутри лавы; число — расстояние до берега в метрах */
-export function lavaDist(x, z) {
-  let d = 1e9;
-  for (const r of LAVA) d = Math.min(d, distToPolyline(x, z, r.pts) - r.w);
-  d += (fbm(x * 0.22 + 11, z * 0.22 - 4) - 0.5) * 1.6;            // неровный берег вместо прямых линий
-  // мост: плавный каменный перешеек, без ступенек
-  for (const [bx, bz] of BRIDGES) d = THREE.MathUtils.lerp(d, Math.max(d, 1.6), 1 - THREE.MathUtils.smoothstep(Math.hypot(x - bx, z - bz), 2, 4));
-  return d;
-}
 
-/** Высота земли: ровная арена в центре, холмы к краям, берега лавы опускаются к руслу */
-export function heightAt(x, z) {
-  const r = Math.hypot(x, z) / HALF;
-  let h = fbm(x * 0.06 + 3, z * 0.06 + 7) * 1.4;
-  h += Math.max(0, r - 0.55) ** 2 * 26 * (0.6 + fbm(x * 0.04, z * 0.04));   // гряды по краю
-  const ld = lavaDist(x, z);
-  if (ld < 1.6) h = THREE.MathUtils.lerp(-0.9, h, THREE.MathUtils.smoothstep(ld, -0.4, 1.6));
+/* --- рельеф без русел: холмы, горы по краю, вулкан, подъём --- */
+function volcanoH(x, z) {
+  const r = Math.hypot(x - V.x, z - V.z);
+  if (r < V.floorR) return V.floorY + fbm(x * 0.3, z * 0.3) * 0.3;
+  if (r < V.rimR) return lerp(V.floorY, V.rimY, smoothstep(r, V.floorR, V.rimR));
+  return V.rimY * Math.exp(-(r - V.rimR) / V.fall) * (0.85 + 0.3 * fbm(x * 0.08, z * 0.08));     // у кромки круто, ниже — пологие
+}
+function rampH(x, z) {                          // расщелина-подъём: высота тропы и насколько точка на ней
+  let best = 1e9, y = 0;
+  for (let i = 0; i < RAMP.length - 1; i++) {
+    const [ax, az, ay0] = RAMP[i], [bx, bz, by] = RAMP[i + 1];
+    const [d, t] = segDist(x, z, ax, az, bx, bz);
+    if (d < best) { best = d; y = lerp(ay0, by, t); }
+  }
+  return [y, 1 - smoothstep(best, 2.2, 4.5)];
+}
+function baseHeight(x, z) {
+  let h = fbm(x * 0.03 + 3, z * 0.03 + 7) * 3 - 1.2 + fbm(x * 0.15, z * 0.15) * 0.25;   // мелкий рельеф дают карты нормалей
+  const e = Math.max(Math.abs(x), Math.abs(z)) / HALF;
+  h += Math.max(0, e - 0.84) ** 2 * 900 * (0.6 + 0.7 * fbm(x * 0.05, z * 0.05));      // горы по краю карты
+  h = Math.max(h, volcanoH(x, z));
+  const [ry, rw] = rampH(x, z);
+  if (rw > 0) h = lerp(h, ry, rw);
   return h;
 }
 
-export async function buildFireland(scene, renderer) {
-  const colliders = new Colliders(HALF - 4);
-  const sky = new THREE.Color(0x1a0d0a);
-  scene.background = sky;
-  scene.fog = new THREE.FogExp2(0x1c0c08, 0.011);
+/* --- русла: плотные точки через 2 м с высотой поверхности лавы (лавопад стекает вниз) --- */
+const RIVERS = LAVA.map((r) => {
+  const dense = [];
+  for (let i = 0; i < r.pts.length - 1; i++) {
+    const [ax, az] = r.pts[i], [bx, bz] = r.pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
+    for (let k = 0; k < n; k++) dense.push([ax + (bx - ax) * k / n, az + (bz - az) * k / n, LAVA_Y]);
+  }
+  dense.push([...r.pts[r.pts.length - 1], LAVA_Y]);
+  if (r.fall) {
+    for (const p of dense) p[2] = baseHeight(p[0], p[1]) - 0.9;
+    for (let i = 1; i < dense.length; i++) dense[i][2] = Math.min(dense[i][2], dense[i - 1][2]);    // лава течёт только вниз
+    for (let pass = 0; pass < 3; pass++) for (let i = 1; i < dense.length - 1; i++) dense[i][2] = (dense[i - 1][2] + dense[i][2] + dense[i + 1][2]) / 3;
+    dense[dense.length - 1][2] = LAVA_Y;
+    for (let i = dense.length - 2; i >= 0; i--) dense[i][2] = Math.max(dense[i][2], LAVA_Y);
+  }
+  return { w: r.w, dense };
+});
 
+/** Расстояние до берега (меньше 0 — в лаве) и высота поверхности ближайшей реки */
+function lavaInfo(x, z) {
+  let d = 1e9, y = LAVA_Y;
+  for (const r of RIVERS) {
+    const p = r.dense;
+    for (let i = 0; i < p.length - 1; i++) {
+      const [dd, t] = segDist(x, z, p[i][0], p[i][1], p[i + 1][0], p[i + 1][1]);
+      if (dd - r.w < d) { d = dd - r.w; y = lerp(p[i][2], p[i + 1][2], t); }
+    }
+  }
+  d += (fbm(x * 0.22 + 11, z * 0.22 - 4) - 0.5) * 1.6;                       // неровный берег
+  for (const [bx, bz] of BRIDGES) d = lerp(d, Math.max(d, 1.8), 1 - smoothstep(Math.hypot(x - bx, z - bz), 2.5, 5));
+  return [d, y];
+}
+export const lavaDist = (x, z) => lavaInfo(x, z)[0];
+
+/** Высота земли в точке: русла врезаны, берега всегда выше лавы */
+export function heightAt(x, z) {
+  let h = baseHeight(x, z);
+  const [ld, ly] = lavaInfo(x, z);
+  if (ld < 3.6) h = Math.max(h, ly + 0.45);                        // берег всегда выше лавы (и на склоне вулкана)
+  if (ld < 1.8) h = lerp(ly - 0.7, h, smoothstep(ld, -0.4, 1.8));
+  return h;
+}
+
+/* ------------------------------------------------------------------------------------------ */
+export async function buildFireland(scene, renderer, { quality = 'medium' } = {}) {
+  const colliders = new Colliders(HALF - 3);
+  scene.background = new THREE.Color(0x1a0d0a);
+  scene.fog = new THREE.FogExp2(0x1c0c08, 0.012);
+
+  // свет: огненное небо (HDRI Poly Haven) — отражения на металле и коже; низкое багровое солнце; отсвет лавы снизу
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environmentIntensity = 0.25;
-  const hemi = new THREE.HemisphereLight(0x7a5a54, 0xc0441a, 1.1);        // снизу — отсвет лавы
+  try {
+    const hdr = await new HDRLoader().loadAsync('assets/textures/sky/fire_sky_1k.hdr');
+    hdr.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = pmrem.fromEquirectangular(hdr).texture;
+    hdr.dispose();
+  } catch (e) { /* без неба тоже работает */ }
+  scene.environmentIntensity = 0.35;
+  const hemi = new THREE.HemisphereLight(0x5e5a5c, 0xb0441a, 0.9);
   const sun = new THREE.DirectionalLight(0xff9a6a, 3.0);
   sun.position.set(-20, 18, -10); sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  const sc = sun.shadow.camera; sc.left = sc.bottom = -20; sc.right = sc.top = 20; sc.near = 1; sc.far = 80;
+  const sc = sun.shadow.camera; sc.left = sc.bottom = -22; sc.right = sc.top = 22; sc.near = 1; sc.far = 90;
   sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.03;
   scene.add(hemi, sun, sun.target);
 
-  scene.add(makeGround());
+  const tex = await loadGroundTextures(renderer, quality === 'high' ? '' : '_1k');
+  scene.add(makeGround(tex));
   const lava = makeLava(); scene.add(lava.mesh);
   const ash = makeAsh(); scene.add(ash.points);
+  scene.add(makePebbles());
+  scene.add(await makeScorch());
 
-  // лава непроходима: коллайдеры-кружки вдоль русел (кроме мостов)
-  for (const r of LAVA) {
-    for (let i = 0; i < r.pts.length - 1; i++) {
-      const [ax, az] = r.pts[i], [bx, bz] = r.pts[i + 1], n = Math.ceil(Math.hypot(bx - ax, bz - az) / 1.2);
-      for (let k = 0; k <= n; k++) {
-        const x = ax + (bx - ax) * k / n, z = az + (bz - az) * k / n;
-        if (BRIDGES.some(([px, pz]) => Math.hypot(x - px, z - pz) < 3.2)) continue;
-        colliders.addCircle(x, z, r.w * 0.9);
-      }
-    }
+  // лава непроходима: кружки вдоль русел, кроме перешейков
+  for (const r of RIVERS) {
+    r.dense.forEach(([x, z], i) => {
+      if (BRIDGES.some(([bx, bz]) => Math.hypot(x - bx, z - bz) < 4.2)) return;
+      colliders.addCircle(x, z, r.w * 0.85);
+    });
   }
   await addProps(scene, colliders);
 
-  // пепел висит вокруг героя, чтобы не тратить частицы на всю карту
-  const update = (dt, t, hero) => { lava.update(t); ash.update(dt); if (hero) ash.follow(hero.position.x, hero.position.z); };
-  // логово Лавового демона: на открытом месте к северу от старта, смотрит в сторону героя
-  return { colliders, occluders: [], doors: [], lights: { hemi, sun }, dummies: [], update, heightAt, size: SIZE, bossSpawn: { x: -8, z: 15, face: 146 } };
+  const update = (dt, t, hero) => { lava.update(t); ash.update(dt); if (hero) ash.follow(hero.position.x, hero.position.y, hero.position.z); };
+  return {
+    colliders, occluders: [], doors: [], lights: { hemi, sun }, dummies: [], update, heightAt,
+    size: SIZE, start: FIRE_START, bossSpawn: LAIR, maxSlope: 1.15,
+  };
 }
 
-/* --- земля: вершинные цвета (пепел, базальт, раскалённая кромка у лавы) + мелкая фактура --- */
-function makeGround() {
+/* --- текстуры земли: 4 материала Poly Haven (цвет + рельеф). На телефоне — 1K: с высоты камеры
+   1K на 3 м плитки уже мельче пикселя экрана; 2K — только в режиме «высокое». --- */
+async function loadGroundTextures(renderer, suffix) {
+  const L = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const load = async (name, srgb) => {
+    const t = await L.loadAsync(`assets/textures/ground/${name}${suffix}.jpg`);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const names = ['ash', 'gravel', 'rock', 'cracked'];
+  const out = {};
+  await Promise.all(names.flatMap((n) => [load(`${n}_col`, true).then((t) => { out[`${n}C`] = t; }), load(`${n}_nor`, false).then((t) => { out[`${n}N`] = t; })]));
+  return out;
+}
+
+/* --- земля: веса материалов считаются по рельефу в каждой вершине:
+   скала — крутые склоны, горы, жерло; гравий — тропы и редкие осыпи; потрескавшаяся земля — у лавы;
+   пепел — всё остальное. Плюс крупные пятна светлее/темнее, чтобы плитка не повторялась. --- */
+function makeGround(tex) {
   const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
   geo.rotateX(-Math.PI / 2);
-  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
-  const ash = new THREE.Color(0x6e655e), basalt = new THREE.Color(0x2c2624), scorched = new THREE.Color(0x4a2a1a), hot = new THREE.Color(0xff5a14);
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i), y = heightAt(x, z);
-    pos.setY(i, y);
-    const n = fbm(x * 0.15, z * 0.15), ld = lavaDist(x, z);
-    c.copy(basalt).lerp(ash, THREE.MathUtils.smoothstep(n, 0.35, 0.75) * 0.8);
-    c.lerp(scorched, THREE.MathUtils.clamp(1 - ld / 6, 0, 1) * 0.7);
-    if (ld < 1.6) c.lerp(hot, THREE.MathUtils.clamp(1 - (ld - 0.3) / 1.3, 0, 1) * 0.55);   // раскалённая кромка берега
-    c.toArray(col, i * 3);
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const pos = geo.attributes.position, n = pos.count;
+  for (let i = 0; i < n; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
   geo.computeVertexNormals();
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, map: grainTexture(), emissive: 0x000000 });
+  const nor = geo.attributes.normal, splat = new Float32Array(n * 3), extra = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), ny = nor.getY(i), [ld] = lavaInfo(x, z);
+    const vr = Math.hypot(x - V.x, z - V.z), edge = Math.max(Math.abs(x), Math.abs(z)) / HALF;
+    const brk = fbm(x * 0.35 + 5, z * 0.35 - 2);                                  // рваный край пятен
+    const path = Math.min(...PATHS.map((p) => distToPolyline(x, z, p)));
+    let gravel = (1 - smoothstep(path, 1.0, 2.6 + brk * 1.2)) + smoothstep(fbm(x * 0.06, z * 0.06 + 9), 0.66, 0.74) * 0.8;
+    let rock = (1 - smoothstep(ny, 0.7, 0.86)) + smoothstep(edge, 0.86, 0.93);                     // склоны и горы по краю
+    rock += (1 - smoothstep(vr, V.rimR + 4, V.rimR + 14)) * 0.7 + smoothstep(fbm(x * 0.05 - 3, z * 0.05), 0.7, 0.78) * 0.6;
+    const cracked = (1 - smoothstep(ld, 0.6, 4.5 + brk * 2)) + (vr < V.floorR + 0.5 ? 0.8 : 0);
+    gravel = clamp(gravel * (0.7 + brk * 0.6), 0, 1); rock = clamp(rock, 0, 1);
+    const c = clamp(cracked, 0, 1) * (1 - rock * 0.6), g = gravel * (1 - rock) * (1 - c), r = rock;
+    splat[i * 3] = g; splat[i * 3 + 1] = r; splat[i * 3 + 2] = c;
+    extra[i * 2] = 0.82 + 0.36 * fbm(x * 0.02 + 40, z * 0.02 - 13);               // крупные пятна
+    extra[i * 2 + 1] = clamp(1 - (ld - 0.2) / 2.6, 0, 1) + (vr < V.floorR ? 0.35 : 0);   // тление у лавы и в жерле
+  }
+  geo.setAttribute('splat', new THREE.BufferAttribute(splat, 3));
+  geo.setAttribute('extra', new THREE.BufferAttribute(extra, 2));
+
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, metalness: 0 });
+  mat.onBeforeCompile = (sh) => {
+    mat.userData.shader = sh;
+    for (const k of ['ashC', 'ashN', 'gravelC', 'gravelN', 'rockC', 'rockN', 'crackedC', 'crackedN']) sh.uniforms[`t_${k}`] = { value: tex[k] };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 splat; attribute vec2 extra; varying vec3 vSplat; varying vec2 vExtra; varying vec3 vWP; varying vec3 vNW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz; vNW = normalize(mat3(modelMatrix) * objectNormal); vSplat = splat; vExtra = extra;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+uniform sampler2D t_ashC, t_ashN, t_gravelC, t_gravelN, t_rockC, t_rockN, t_crackedC, t_crackedN;
+varying vec3 vSplat; varying vec2 vExtra; varying vec3 vWP; varying vec3 vNW;
+vec3 nrm(sampler2D s, vec2 uv) { return texture2D(s, uv).xyz * 2.0 - 1.0; }
+vec2 rot37(vec2 p) { return mat2(0.8, -0.6, 0.6, 0.8) * p; }      // второй слой под углом — плитка не складывается в ряды`)
+      .replace('#include <map_fragment>', `
+vec2 uvP = vec2(vWP.x, -vWP.z);                      // плоская проекция сверху (u — восток, v — север)
+float wG = vSplat.x, wR = vSplat.y, wC = vSplat.z, wA = max(0.0, 1.0 - wG - wR - wC);
+// пепел: два масштаба одной текстуры — повтор плитки не виден; иголки приглушены до золы
+vec3 cA = mix(texture2D(t_ashC, uvP / 3.2).rgb, texture2D(t_ashC, rot37(uvP) / 7.3 + 0.31).rgb, 0.5);
+cA = mix(cA, vec3(dot(cA, vec3(0.3, 0.59, 0.11))), 0.6) * vec3(0.52, 0.49, 0.47);   // зола: серее и темнее, иголки почти не видны
+vec3 cG = mix(texture2D(t_gravelC, uvP / 3.0).rgb, texture2D(t_gravelC, rot37(uvP) / 4.4 + 0.5).rgb, 0.5);
+cG = mix(cG, vec3(dot(cG, vec3(0.333))), 0.35) * vec3(0.46, 0.42, 0.4);   // светлый гравий — под тёмный базальт
+vec3 cCraw = texture2D(t_crackedC, uvP / 4.0).rgb, cC = cCraw * vec3(0.62, 0.42, 0.36);
+// скала: три проекции (без растяжки на крутых склонах)
+vec3 bw = pow(abs(normalize(vNW)), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
+vec3 cR = (texture2D(t_rockC, vWP.zy / 6.0).rgb * bw.x + texture2D(t_rockC, vWP.xz / 6.0).rgb * bw.y + texture2D(t_rockC, vWP.xy / 6.0).rgb * bw.z) * 1.35;
+// стык материалов по рельефу текстуры: камешки гравия «торчат» из пепла, а не просвечивают
+float hG = dot(cG, vec3(0.6)), hA = dot(cA, vec3(0.6));
+wG = clamp(wG + (hG - hA) * wG * (1.0 - wG) * 3.0, 0.0, 1.0);
+wA = max(0.0, 1.0 - wG - wR - wC);
+vec3 groundCol = (cA * wA + cG * wG + cR * wR + cC * wC) * vExtra.x;
+diffuseColor.rgb *= groundCol;`)
+      .replace('#include <normal_fragment_maps>', `
+vec3 tn = nrm(t_ashN, uvP / 3.2) * wA + nrm(t_gravelN, uvP / 3.0) * wG + nrm(t_crackedN, uvP / 4.0) * wC
+        + (nrm(t_rockN, vWP.zy / 6.0) * bw.x + nrm(t_rockN, vWP.xz / 6.0) * bw.y + nrm(t_rockN, vWP.xy / 6.0) * bw.z) * wR;
+vec3 Ng = normalize(vNW), Tg = normalize(vec3(1.0, 0.0, 0.0) - Ng * Ng.x), Bg = cross(Ng, Tg);
+vec3 nW = normalize(Tg * tn.x + Bg * tn.y + Ng * max(tn.z, 0.25));
+normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+// тлеющие трещины у лавы и в жерле: светятся тёмные щели потрескавшейся земли
+float crackLine = 1.0 - smoothstep(0.16, 0.3, dot(cCraw, vec3(0.333)));
+totalEmissiveRadiance += vec3(1.0, 0.28, 0.06) * vExtra.y * vExtra.y * (0.05 + 0.9 * crackLine * wC);`);
+  };
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   return mesh;
 }
 
-function grainTexture() {
-  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
-  const g = c.getContext('2d'); g.fillStyle = '#d0d0d0'; g.fillRect(0, 0, N, N);
-  let seed = 9; const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  for (let i = 0; i < 5000; i++) { const v = 130 + r() * 125; g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(r() * N, r() * N, 1 + r() * 2, 1 + r() * 2); }
-  for (let i = 0; i < 300; i++) { const v = 90 + r() * 60; g.fillStyle = `rgb(${v},${v},${v})`; g.beginPath(); g.arc(r() * N, r() * N, 1 + r() * 3, 0, 7); g.fill(); }
-  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(30, 30); t.anisotropy = 8;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+/* --- мелкие камни: 2200 штук одним вызовом отрисовки, каждый со своим поворотом, размером и оттенком --- */
+function makePebbles() {
+  const base = new THREE.IcosahedronGeometry(0.5, 0);
+  const p = base.attributes.position;
+  for (let i = 0; i < p.count; i++) {                       // неровный камень, а не мяч
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), k = 0.75 + hash(x * 9.1, z * 7.3 + y) * 0.5;
+    p.setXYZ(i, x * k, y * k * 0.6, z * k);
+  }
+  base.computeVertexNormals();
+  const N = 2200, mesh = new THREE.InstancedMesh(base, new THREE.MeshStandardMaterial({ roughness: 0.85, flatShading: true }), N);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), c = new THREE.Color();
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let k = 0;
+  for (let tries = 0; k < N && tries < N * 6; tries++) {
+    const x = (rnd() - 0.5) * (SIZE - 12), z = (rnd() - 0.5) * (SIZE - 12);
+    const [ld] = lavaInfo(x, z);
+    if (ld < 0.8 || Math.hypot(x - V.x, z - V.z) < V.rimR + 3) continue;
+    if (fbm(x * 0.08, z * 0.08) < 0.42 && rnd() < 0.7) continue;          // кучками, а не ровным слоем
+    const sz = 0.08 + rnd() ** 3 * 0.6;
+    e.set(rnd() * 6, rnd() * 6, rnd() * 6); q.setFromEuler(e); s.set(sz, sz, sz);
+    m.compose(new THREE.Vector3(x, heightAt(x, z) + sz * 0.12, z), q, s);
+    mesh.setMatrixAt(k, m);
+    const v = 0.025 + rnd() * 0.045; c.setRGB(v * 1.15, v, v * 0.9);             // базальт и обсидиан (линейный цвет)
+    if (ld < 3 && rnd() < 0.3) c.setRGB(0.35, 0.06, 0.02);                      // раскалённые у берега
+    mesh.setColorAt(k, c);
+    k++;
+  }
+  mesh.count = k;
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  return mesh;
+}
+
+/* --- пятна копоти на земле (спрайты Kenney): плоские сетки, повторяющие рельеф, одним мешем --- */
+async function makeScorch() {
+  let map;
+  try { map = await new THREE.TextureLoader().loadAsync('assets/textures/fx/scorch.png'); } catch (e) { return new THREE.Group(); }
+  map.colorSpace = THREE.SRGBColorSpace;
+  const positions = [], uvs = [], idx = [];
+  let seed = 3; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const S = 4;                                                         // каждое пятно — сетка 4×4, ложится по рельефу
+  for (let n = 0; n < 70; n++) {
+    const x = (rnd() - 0.5) * (SIZE - 20), z = (rnd() - 0.5) * (SIZE - 20), [ld] = lavaInfo(x, z);
+    if (ld < 1 || Math.hypot(x - V.x, z - V.z) < V.rimR + 6) continue;
+    const size = 2.5 + rnd() * 4, rot = rnd() * 6.28, cs = Math.cos(rot), sn = Math.sin(rot), tile = Math.floor(rnd() * 3);
+    const b = positions.length / 3;
+    for (let j = 0; j <= S; j++) for (let i = 0; i <= S; i++) {
+      const u = i / S - 0.5, v = j / S - 0.5, px = x + (u * cs - v * sn) * size, pz = z + (u * sn + v * cs) * size;
+      positions.push(px, heightAt(px, pz) + 0.03, pz);
+      uvs.push((tile + i / S) / 3, j / S);
+    }
+    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) { const a = b + j * (S + 1) + i; idx.push(a, a + S + 1, a + 1, a + 1, a + S + 1, a + S + 2); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx); g.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x050302, alphaMap: map, transparent: true, depthWrite: false, roughness: 1,
+    polygonOffset: true, polygonOffsetFactor: -2, opacity: 0.85 });
+  const mesh = new THREE.Mesh(g, mat);
+  mesh.receiveShadow = true; mesh.userData.noAO = true;
+  return mesh;
 }
 
 /* --- лава: свой шейдер, без текстур (весит 0 КБ, не «мылится» и не растягивается).
    Лава — лента вдоль каждого русла с координатами (s — вдоль течения в метрах, a — поперёк),
-   поэтому течение всегда идёт по руслу, даже на поворотах.
+   поэтому течение всегда идёт по руслу, даже на поворотах; лавопад спускается по склону вулкана.
    Картинка: плиты остывшей чёрной корки (ячейки Вороного) плывут по течению, между ними светятся
    раскалённые трещины; к середине русла плиты тают и открывают жидкую жёлто-оранжевую лаву.
    Значения ярче 1 подхватывает bloom — получается свечение без источников света. --- */
-const LAVA_Y = -0.3;
 function makeLava() {
   const mat = new THREE.ShaderMaterial({
     uniforms: { t: { value: 0 } },
@@ -189,7 +381,7 @@ function makeLava() {
       }`,
   });
   const group = new THREE.Group();
-  for (const r of LAVA) {
+  for (const r of RIVERS) {
     const m = new THREE.Mesh(riverRibbon(r), mat);
     m.userData.noAO = true;
     m.renderOrder = 1;                       // после земли: скрытая под берегом часть не считается
@@ -198,24 +390,22 @@ function makeLava() {
   return { mesh: group, update: (t) => { mat.uniforms.t.value = t; } };
 }
 
-/* Лента вдоль ломаной русла: шире самого русла (края уходят под берег), стыки — «в ус» */
-function riverRibbon({ w, pts }) {
-  const half = w + 2, ACROSS = 6, pos = [], uv = [], edge = [], idx = [];
+/* Лента вдоль русла через каждые 2 м: шире самого русла (края уходят под берег), высота — поверхность лавы */
+function riverRibbon({ w, dense }) {
+  const half = w + 1.6, ACROSS = 6, pos = [], uv = [], edge = [], idx = [];
   let s = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const [x, z] = pts[i];
-    const d0 = i > 0 ? new THREE.Vector2(x - pts[i - 1][0], z - pts[i - 1][1]).normalize() : null;
-    const d1 = i < pts.length - 1 ? new THREE.Vector2(pts[i + 1][0] - x, pts[i + 1][1] - z).normalize() : null;
-    const tan = (d0 && d1 ? d0.clone().add(d1) : (d0 || d1)).normalize();
-    const miter = d0 && d1 ? 1 / Math.max(0.5, tan.dot(d1)) : 1;
-    if (i > 0) s += Math.hypot(x - pts[i - 1][0], z - pts[i - 1][1]);
+  for (let i = 0; i < dense.length; i++) {
+    const [x, z, y] = dense[i];
+    const a0 = dense[Math.max(0, i - 1)], a1 = dense[Math.min(dense.length - 1, i + 1)];
+    const tan = new THREE.Vector2(a1[0] - a0[0], a1[1] - a0[1]).normalize();
+    if (i > 0) s += Math.hypot(x - dense[i - 1][0], z - dense[i - 1][1]);
     for (let j = 0; j <= ACROSS; j++) {
       const a = -half + (2 * half * j) / ACROSS;
-      pos.push(x - tan.y * a * miter, LAVA_Y, z + tan.x * a * miter);
+      pos.push(x - tan.y * a, y, z + tan.x * a);
       uv.push(s, a); edge.push(w - Math.abs(a));
     }
   }
-  for (let i = 0; i < pts.length - 1; i++) for (let j = 0; j < ACROSS; j++) {
+  for (let i = 0; i < dense.length - 1; i++) for (let j = 0; j < ACROSS; j++) {
     const k = i * (ACROSS + 1) + j, n = k + ACROSS + 1;
     idx.push(k, k + 1, n, k + 1, n + 1, n);
   }
@@ -229,7 +419,7 @@ function riverRibbon({ w, pts }) {
 
 /* --- пепел и искры. Частицы живут в мире (не едут вместе с героем): когда частица уходит
    дальше R от героя, она переносится на противоположную сторону — так облако всегда вокруг,
-   но при беге герой проходит сквозь него. Мягкие круглые точки, а не квадраты; искры — редкие и тёплые. --- */
+   но при беге герой проходит сквозь него. Высота — от земли под героем (на вулкане тоже). --- */
 function softDot() {
   const c = document.createElement('canvas'); c.width = c.height = 32;
   const g = c.getContext('2d'), gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
@@ -252,7 +442,7 @@ function makeAsh() {
   const ash = makeCloud(260, 18, 0x8a8480, 0.06, { opacity: 0.55 });
   const sparks = makeCloud(70, 14, 0xff8a30, 0.07, { opacity: 0.95, blending: THREE.AdditiveBlending });
   const group = new THREE.Group(); group.add(ash.points, sparks.points);
-  let t = 0, hx = 0, hz = 0;
+  let t = 0, hx = 0, hy = 0, hz = 0;
   const step = (c, dt, fall, rise) => {
     const { pos, seed, N, R } = c;
     for (let i = 0; i < N; i++) {
@@ -260,8 +450,7 @@ function makeAsh() {
       pos[k] += Math.sin(t * 0.6 + s) * dt * 0.35;
       pos[k + 2] += Math.cos(t * 0.5 + s * 1.3) * dt * 0.35;
       pos[k + 1] += (rise ? 0.6 + (s % 1) * 0.6 : -(fall + (s % 1) * 0.25)) * dt;
-      if (pos[k + 1] < 0) pos[k + 1] += 8; if (pos[k + 1] > 8) pos[k + 1] -= 8;
-      // перенос через край облака вокруг героя
+      if (pos[k + 1] - hy < -1) pos[k + 1] += 9; else if (pos[k + 1] - hy > 8) pos[k + 1] -= 9;
       if (pos[k] - hx > R) pos[k] -= 2 * R; else if (pos[k] - hx < -R) pos[k] += 2 * R;
       if (pos[k + 2] - hz > R) pos[k + 2] -= 2 * R; else if (pos[k + 2] - hz < -R) pos[k + 2] += 2 * R;
     }
@@ -270,24 +459,34 @@ function makeAsh() {
   return {
     points: group,
     update(dt) { t += dt; step(ash, dt, 0.18, false); step(sparks, dt, 0, true); sparks.points.material.opacity = 0.75 + 0.2 * Math.sin(t * 3); },
-    follow(x, z) { hx = x; hz = z; },
+    follow(x, y, z) { hx = x; hy = y; hz = z; },
   };
 }
 
+/* --- модели Meshy: расставляются по карте случайно, но повторяемо (одно и то же зерно),
+   не на лаве, не на тропах и не в центрах зон --- */
 async function addProps(scene, colliders) {
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   for (const p of FIRE_PROPS) {
     let gltf;
     try { gltf = await loadGltf(`assets/models/fire/${p.model}.glb`); } catch (e) { continue; }   // модели ещё нет
     const box = new THREE.Box3().setFromObject(gltf.scene), h = box.max.y - box.min.y;
-    for (const [x, z, rot, s] of p.at) {
+    let placed = 0;
+    for (let tries = 0; placed < p.count && tries < p.count * 40; tries++) {
+      const x = (rnd() - 0.5) * (SIZE - 16), z = (rnd() - 0.5) * (SIZE - 16);
+      if (lavaInfo(x, z)[0] < 5) continue;
+      if (Math.min(...PATHS.map((q) => distToPolyline(x, z, q))) < 5) continue;
+      if (ZONES.some(([zx, zz, r]) => Math.hypot(x - zx, z - zz) < r)) continue;
+      const s = lerp(p.scale[0], p.scale[1], rnd());
       const o = gltf.scene.clone(true);
       o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
       sharpen(o);
-      const k = (3.2 * s) / h;                                       // базовая высота скалы ≈ 3.2 м
-      o.scale.setScalar(k); o.rotation.y = rot * Math.PI / 180;
-      o.position.set(x, heightAt(x, z) - box.min.y * k - 0.2, z);
+      const k = (p.base * s) / h;
+      o.scale.setScalar(k); o.rotation.y = rnd() * Math.PI * 2;
+      o.position.set(x, heightAt(x, z) - box.min.y * k - 0.25, z);
       scene.add(o);
       colliders.addCircle(x, z, p.col * s);
+      placed++;
     }
   }
 }
