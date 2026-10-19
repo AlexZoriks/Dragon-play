@@ -85,3 +85,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #14110d; col
 
 /* удар: над кнопкой бега */
 .btn--attack { position: fixed; right: calc(18px + var(--safe-r)); bottom: calc(176px + var(--safe-b)); }
+
+/* счётчик кадров: маленький, в нижнем углу, не мешает */
+.fps { position: fixed; left: 50%; bottom: calc(6px + var(--safe-b)); transform: translateX(-50%); font: 11px/1 system-ui, sans-serif;
+  color: var(--ink-dim); background: rgba(0, 0, 0, .35); padding: 3px 7px; border-radius: 6px; pointer-events: none; }

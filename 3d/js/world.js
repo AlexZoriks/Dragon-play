@@ -217,13 +217,37 @@ async function addLamps(scene, colliders) {
     lamp.rotation.y = rot * DEG; lamp.position.set(x, 0, z);
     // фонарь висит на кронштейне: свет ставим в точку лампы
     const head = new THREE.Vector3(0, 2.7, 1.1).applyAxisAngle(new THREE.Vector3(0, 1, 0), rot * DEG);
-    const light = new THREE.PointLight(0xffa04a, 14, 10, 1.7);
-    light.position.copy(head).add(lamp.position);
+    // настоящий источник света очень дорог (считается на каждом пикселе сцены) — вместо него
+    // светящаяся лампа, ореол вокруг неё и тёплое пятно света на земле
+    const at = head.clone().add(lamp.position);
     const glow = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd08a }));
-    glow.position.copy(light.position).y -= 0.1;
-    scene.add(lamp, light, glow);
+    glow.position.copy(at).y -= 0.1;
+    scene.add(lamp, glow, halo(at, 1.1), pool(at.x, at.z, 4.2));
     colliders.addCircle(x, z, 0.3);
   }
+}
+
+/* Тёплый свет без источника света: круглое пятно на земле (аддитивно) и ореол-спрайт */
+let glowTex = null;
+function glowTexture() {
+  if (glowTex) return glowTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,190,110,0.85)'); gr.addColorStop(0.4, 'rgba(255,150,70,0.35)'); gr.addColorStop(1, 'rgba(255,120,40,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  glowTex = new THREE.CanvasTexture(c); glowTex.colorSpace = THREE.SRGBColorSpace;
+  return glowTex;
+}
+function pool(x, z, r) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(r * 2, r * 2),
+    new THREE.MeshBasicMaterial({ map: glowTexture(), transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.position.set(x, 0.03, z); m.renderOrder = 2; m.userData.noAO = true;
+  return m;
+}
+function halo(at, size) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.8 }));
+  s.position.copy(at); s.scale.set(size, size, 1);
+  return s;
 }
 
 async function addGraveyard(scene, colliders) {
@@ -250,7 +274,7 @@ async function addGraveyard(scene, colliders) {
     const o = await envModel(name, 'gothic'); o.position.set(G.x + dx, 0, G.z + dz); o.rotation.y = rot * DEG; scene.add(o);
     if (!name.startsWith('candle')) addCollider(colliders, o, { x: G.x + dx, z: G.z + dz, col: name.startsWith('tree') ? 'circle' : 'box', rcol: 0.5 });
   }
-  const candle = new THREE.PointLight(0xff9a3a, 6, 7, 1.8); candle.position.set(G.x + 1.5, 1.4, G.z - 0.2); scene.add(candle);
+  scene.add(halo(new THREE.Vector3(G.x + 1.5, 1.3, G.z - 0.2), 0.8), pool(G.x + 1.5, G.z - 0.2, 3));
 }
 
 /* Лес по краю: случайные (но всегда одинаковые) деревья в кольце между inner и outer */

@@ -107,7 +107,7 @@ export const NPCS = [
 ];
 
 /* Режим отрисовки персонажей: 'hd2d' — пиксельные спрайты в 3D-мире (как Dragon Quest HD-2D), '3d' — 3D-модели */
-export const CHAR_MODE_DEFAULT = 'hd2d';
+export const CHAR_MODE_DEFAULT = '3d';
 
 /* Главный герой и его облики (скины). Облик меняется кнопкой 🎭 и запоминается на устройстве.
    keep — какие предметы модели видны; height — рост в метрах. */

@@ -32,16 +32,17 @@ addEventListener('error', (e) => state.errors.push(String(e.message)));
    high   — чёткость до 2×, тени 2048, затенение углов (GTAO), свечение, цвет и «миниатюра»;
    medium — чёткость до 1.5×, тени 1024, только цвет и «миниатюра» (самое дорогое выключено);
    low    — чёткость 1×, без теней и постобработки. */
+/* px — потолок числа пикселей кадра: на большом мониторе с плотностью 2 кадр иначе выходит 6+ млн пикселей */
 const QUALITY = {
-  high: { name: 'высокое', dpr: 2, shadow: 2048, ao: true, bloom: true, post: true },
-  medium: { name: 'среднее', dpr: 1.5, shadow: 1024, ao: false, bloom: false, post: true },
-  low: { name: 'экономное', dpr: 1, shadow: 0, ao: false, bloom: false, post: false },
+  high: { name: 'высокое', dpr: 2, px: 2.4e6, shadow: 2048, ao: true, bloom: true, post: true },
+  medium: { name: 'среднее', dpr: 1.5, px: 1.3e6, shadow: 1024, ao: false, bloom: true, post: true },
+  low: { name: 'экономное', dpr: 1, px: 0.8e6, shadow: 0, ao: false, bloom: false, post: false },
 };
 const ORDER = ['high', 'medium', 'low'];
 state.quality = initialQuality();
 function initialQuality() {
   try { const q = localStorage.getItem('g3d-quality'); if (QUALITY[q]) return q; } catch (e) { /* приватный режим */ }
-  return matchMedia('(pointer: coarse)').matches ? 'medium' : 'high';
+  return 'medium';                              // «высокое» — только вручную, если устройство тянет
 }
 function applyQuality(q, announce = true) {
   state.quality = q;
@@ -62,10 +63,11 @@ function applyQuality(q, announce = true) {
 }
 
 function resize() {
-  const q = Math.min(devicePixelRatio, QUALITY[state.quality].dpr);
+  const Q = QUALITY[state.quality];
+  const q = Math.min(devicePixelRatio, Q.dpr, Math.sqrt(Q.px / (innerWidth * innerHeight)));
   renderer.setPixelRatio(q);
   renderer.setSize(innerWidth, innerHeight, false);
-  post.setSize(innerWidth, innerHeight, Math.min(q, 1.5));
+  post.setSize(innerWidth, innerHeight, q);
   view.camera.aspect = innerWidth / innerHeight;
   view.camera.updateProjectionMatrix();
 }
@@ -125,10 +127,7 @@ async function setSkin(id) {
   const hero = skin.sprite
     ? new SpriteCharacter(await loadSprite(skin.sprite), pos, view.camera)
     : new Character(await characterModel(skin.model, skin.keep), { ...pos, height: skin.height });
-  // «свет героя», как в Diablo: героя видно на тёмной земле и ночью
-  const light = new THREE.PointLight(0xffd2a0, 6, 6, 1.6);
-  light.position.set(0, 3.2, 0.6);
-  hero.object.add(light);
+
   if (old) scene.remove(old.object);
   scene.add(hero.object);
   state.hero = hero;
@@ -147,6 +146,7 @@ bind('btn-skin', async () => {
 /* ---------- кадр ---------- */
 const timer = new THREE.Timer();
 let fpsT = 0, fpsN = 0, slow = 0;
+const fpsEl = document.getElementById('fps');
 
 function frame() {
   timer.update();
@@ -154,6 +154,7 @@ function frame() {
   fpsT += dt; fpsN++;
   if (fpsT > 1) {
     state.fps = Math.round(fpsN / fpsT); fpsT = 0; fpsN = 0;
+    fpsEl.textContent = `${state.fps} к/с · ${QUALITY[state.quality].name}`;
     // авто-понижение: 3 секунды подряд меньше 28 кадров — на ступень ниже (только вниз и только пока игрок сам не выбрал)
     slow = state.fps < 28 ? slow + 1 : 0;
     if (slow >= 3 && state.autoQ && state.quality !== 'low' && !navigator.webdriver) {
