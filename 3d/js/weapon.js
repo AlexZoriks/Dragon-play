@@ -2,7 +2,7 @@
    Огонь вокруг клинка — лёгкие частицы (40 точек, аддитивно), без источников света:
    клинок светится сам за счёт emissive-текстуры трещин, а свечение (bloom) делает ореол. */
 import * as THREE from 'three';
-import { loadGltf } from './assets.js';
+import { loadGltf, sharpen } from './assets.js';
 
 const DEG = Math.PI / 180;
 
@@ -18,6 +18,7 @@ export async function attachWeapon(character, def) {
 
   const model = gltf.scene.clone(true);
   model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  sharpen(model);
   const box = new THREE.Box3().setFromObject(model), h = box.max.y - box.min.y;
   const k = def.length / h;
   model.scale.setScalar(k);

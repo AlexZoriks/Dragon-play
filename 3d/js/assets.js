@@ -17,6 +17,18 @@ function load(url) {
   return cache.get(url);
 }
 
+/* Анизотропная фильтрация: текстуры, видимые под углом (камера сверху), остаются чёткими, а не «мылятся» */
+let maxAniso = 8;
+export const setMaxAnisotropy = (n) => { maxAniso = n; };
+export function sharpen(root) {
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) {
+      if (m[k] && m[k].anisotropy !== maxAniso) { m[k].anisotropy = maxAniso; m[k].needsUpdate = true; }
+    }
+  });
+}
+
 /** Любая модель по пути (с общим кэшем) */
 export const loadGltf = (url) => load(url);
 
@@ -42,6 +54,7 @@ export async function envModel(name, pack = 'env') {
 export async function characterModel(name, keep = []) {
   const gltf = await load(charUrl(name));
   const root = cloneSkinned(gltf.scene);
+  sharpen(root);
   const keepSet = new Set(keep);
   const isBody = (n) => /_(Arm|Body|Head|Leg)/.test(n);       // тело видно всегда
   root.traverse((o) => {

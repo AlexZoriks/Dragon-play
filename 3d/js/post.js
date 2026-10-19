@@ -13,7 +13,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const GradeShader = {
   uniforms: { tDiffuse: { value: null }, saturation: { value: 0.86 }, contrast: { value: 1.08 }, vignette: { value: 0.42 },
-    tilt: { value: 0.8 }, texel: { value: new THREE.Vector2(1 / 1280, 1 / 800) } },
+    tilt: { value: 0.0 }, texel: { value: new THREE.Vector2(1 / 1280, 1 / 800) } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: `
     uniform sampler2D tDiffuse; uniform float saturation, contrast, vignette, tilt; uniform vec2 texel; varying vec2 vUv;

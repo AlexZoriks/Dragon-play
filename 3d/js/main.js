@@ -2,8 +2,9 @@
    Порядок кадра: ввод → герой → жители → взаимодействие → камера → отрисовка. */
 import * as THREE from 'three';
 import { HERO, SKINS, DEFAULT_SKIN, NPCS, MOVE, DIALOGS, PROPS, CHAR_MODE_DEFAULT } from './config.js';
-import { onProgress, preload, charUrl, envUrl, characterModel } from './assets.js';
+import { onProgress, preload, charUrl, envUrl, characterModel, setMaxAnisotropy } from './assets.js';
 import { buildWorld } from './world.js';
+import { buildArena } from './arena.js';
 import { Character } from './character.js';
 import { Npc, SpriteNpc } from './npc.js';
 import { SpriteCharacter, loadSprite } from './sprite.js';
@@ -22,6 +23,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
+setMaxAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 const view = new FollowCamera(innerWidth / innerHeight);
 const post = new PostFx(renderer, scene, view.camera);
 const input = new Input({ dpad: document.getElementById('dpad'), canvas });
@@ -86,6 +88,14 @@ bind('btn-attack', () => {
   // удар: только если есть такая анимация и герой не в разговоре; ходьба не прерывает замах
   if (!state.hero || ui.dialogOpen || state.hero.oneshot) return;
   if (state.hero.actions?.attack) state.hero.playOnce('attack'); else state.hero.playOnce('cheer');
+  // попадание по чучелу: в момент удара (середина замаха), если чучело впереди в пределах 2.6 м
+  setTimeout(() => {
+    const h = state.hero, fx = Math.sin(h.heading), fz = Math.cos(h.heading);
+    for (const d of state.world.dummies || []) {
+      const dx = d.x - h.position.x, dz = d.z - h.position.z, dist = Math.hypot(dx, dz);
+      if (dist < 2.6 && (dx * fx + dz * fz) / dist > 0.3) d.hit(h.position.x, h.position.z);
+    }
+  }, 1250);
 });
 bind('btn-run', (e) => { state.run = !state.run; e.currentTarget.classList.toggle('is-on', state.run); });
 bind('btn-quality', () => { state.autoQ = false; applyQuality(ORDER[(ORDER.indexOf(state.quality) + 1) % ORDER.length]); });
@@ -98,10 +108,17 @@ input.onAttack = () => document.getElementById('btn-attack').click();
 /* ---------- загрузка ---------- */
 async function start() {
   onProgress(ui.progress);
-  await preload([...(SKINS[currentSkin()].model ? [charUrl(SKINS[currentSkin()].model)] : []), ...(CHAR_MODE_DEFAULT === '3d' ? NPCS.map((n) => charUrl(n.model)) : []), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')]);
-  state.world = await buildWorld(scene, renderer);
+  // локация: полигон для тестов (по умолчанию) или старая деревня (?loc=village)
+  state.loc = new URLSearchParams(location.search).get('loc') === 'village' ? 'village' : 'arena';
+  const village = state.loc === 'village';
+  document.querySelector('.hud__place b').textContent = village ? 'Изумрудные луга' : 'Полигон';
+  document.querySelector('.hud__place span').textContent = village ? 'деревенская площадь · тест 3D' : 'проверка героя, оружия и анимаций';
+  await preload([...(SKINS[currentSkin()].model ? [charUrl(SKINS[currentSkin()].model)] : []),
+    ...(village ? [...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')] : [])]);
+  state.world = village ? await buildWorld(scene, renderer) : await buildArena(scene, renderer);
+  if (!village) Object.assign(HERO, { x: 0, z: 3, face: 180 });
   await setSkin(currentSkin());
-  for (const def of NPCS) {
+  for (const def of village ? NPCS : []) {
     const npc = CHAR_MODE_DEFAULT === 'hd2d' && def.sprite
       ? new SpriteNpc(await loadSprite(def.sprite), def, view.camera)
       : new Npc(await characterModel(def.model, def.keep), def);
@@ -170,6 +187,7 @@ function frame() {
   for (const n of npcs) { n.think(dt, hero, world.colliders); n.update(dt); }
   hero.update(dt);
   updateWeapon(state.weapon, dt);
+  for (const d of world.dummies || []) d.update(dt);
   updateFocus();
   // тень следует за героем, чтобы карта теней была резкой рядом с ним
   const sun = world.lights.sun;
