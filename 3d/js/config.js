@@ -113,7 +113,11 @@ export const CHAR_MODE_DEFAULT = '3d';
    keep — какие предметы модели видны; height — рост в метрах. */
 export const HERO = { x: 0.5, z: 9, face: 180 };
 export const SKINS = {
-  oni: { name: 'Они-самурай', model: 'Oni', keep: [], height: 1.95 },
+  oni: {
+    name: 'Они-самурай', model: 'Oni', keep: [], height: 1.95,
+    // огненный двуручник в правой руке; rot/offset — посадка рукояти в кисти Mixamo-скелета
+    weapon: { model: 'FireSword', bone: 'RightHand$', length: 1.5, grip: 0.82, rot: [90, 0, 0], offset: [0, 0.06, 0], fire: true },
+  },
   pixel: { name: 'Искатель приключений (пиксели)', sprite: 'hero' },
   wanderer: { name: 'Странник', model: 'Rogue_Hooded', keep: ['Knife', 'Rogue_Cape'], height: 1.8 },
   reaper: { name: 'Жнец Пустоты', model: 'Reaper', keep: [], height: 2.15 },

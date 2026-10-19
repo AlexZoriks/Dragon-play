@@ -7,6 +7,7 @@ import { buildWorld } from './world.js';
 import { Character } from './character.js';
 import { Npc, SpriteNpc } from './npc.js';
 import { SpriteCharacter, loadSprite } from './sprite.js';
+import { attachWeapon, updateWeapon } from './weapon.js';
 import { FollowCamera } from './camera.js';
 import { Input } from './input.js';
 import { ui } from './ui.js';
@@ -26,6 +27,7 @@ const post = new PostFx(renderer, scene, view.camera);
 const input = new Input({ dpad: document.getElementById('dpad'), canvas });
 const state = { autoQ: true, run: true, quality: 'medium', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0 };
 window.__g3d = state;                       // для автотестов
+state.setGrip = (rot, off) => { const g = state.weapon.grip; g.rotation.set(...rot.map((a) => a * Math.PI / 180)); if (off) g.position.set(...off); };
 addEventListener('error', (e) => state.errors.push(String(e.message)));
 
 /* Качество графики: три уровня. На телефоне по умолчанию «среднее»; если кадров мало — понижается само.
@@ -132,6 +134,7 @@ async function setSkin(id) {
   scene.add(hero.object);
   state.hero = hero;
   state.skin = id;
+  state.weapon = skin.weapon ? await attachWeapon(hero, skin.weapon) : null;
   try { localStorage.setItem('g3d-skin', id); } catch (e) { /* приватный режим */ }
 }
 
@@ -166,6 +169,7 @@ function frame() {
   moveHero(dt);
   for (const n of npcs) { n.think(dt, hero, world.colliders); n.update(dt); }
   hero.update(dt);
+  updateWeapon(state.weapon, dt);
   updateFocus();
   // тень следует за героем, чтобы карта теней была резкой рядом с ним
   const sun = world.lights.sun;

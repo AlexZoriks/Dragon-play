@@ -17,6 +17,9 @@ function load(url) {
   return cache.get(url);
 }
 
+/** Любая модель по пути (с общим кэшем) */
+export const loadGltf = (url) => load(url);
+
 export const envUrl = (name, pack = 'env') => `assets/models/${pack}/${name}.gltf`;
 export const charUrl = (name) => `assets/models/chars/${name}.glb`;
 
