@@ -14,6 +14,8 @@ import { FollowCamera } from './camera.js';
 import { Input } from './input.js';
 import { ui } from './ui.js';
 import { PostFx } from './post.js';
+import { Boss, BOSS_DEF } from './boss.js';
+import { combatUi } from './combat-ui.js';
 
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -28,7 +30,8 @@ setMaxAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 const view = new FollowCamera(innerWidth / innerHeight);
 const post = new PostFx(renderer, scene, view.camera);
 const input = new Input({ dpad: document.getElementById('dpad'), canvas });
-const state = { autoQ: true, run: true, quality: 'medium', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0 };
+const state = { autoQ: true, run: true, quality: 'medium', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0,
+  boss: null, hp: 100, maxHp: 100, hurtT: 99 };
 window.__g3d = state;                       // для автотестов
 state.view = view;
 state.setGrip = (rot, off, order = 'YXZ') => { const g = state.weapon.grip; g.rotation.set(...rot.map((a) => a * Math.PI / 180), order); if (off) g.position.set(...off); };
@@ -89,13 +92,22 @@ bind('btn-zoom-out', () => view.zoom(1.2));
 bind('btn-attack', () => {
   // удар: только если есть такая анимация и герой не в разговоре; ходьба не прерывает замах
   if (!state.hero || ui.dialogOpen || state.hero.oneshot) return;
+  if (state.hero.dead) return;
   if (state.hero.actions?.attack) state.hero.playOnce('attack'); else state.hero.playOnce('cheer');
-  // попадание по чучелу: в момент удара (середина замаха), если чучело впереди в пределах 2.6 м
+  // попадание: в момент удара (середина замаха) — по чучелам и боссу впереди героя
   setTimeout(() => {
     const h = state.hero, fx = Math.sin(h.heading), fz = Math.cos(h.heading);
-    for (const d of state.world.dummies || []) {
-      const dx = d.x - h.position.x, dz = d.z - h.position.z, dist = Math.hypot(dx, dz);
-      if (dist < 2.6 && (dx * fx + dz * fz) / dist > 0.3) d.hit(h.position.x, h.position.z);
+    if (h.dead) return;
+    const ahead = (x, z, reach) => {
+      const dx = x - h.position.x, dz = z - h.position.z, dist = Math.hypot(dx, dz);
+      return dist < reach && (dist < 0.8 || (dx * fx + dz * fz) / dist > 0.3);
+    };
+    for (const d of state.world.dummies || []) if (ahead(d.x, d.z, 2.6)) d.hit(h.position.x, h.position.z);
+    const b = state.boss;
+    if (b?.alive && ahead(b.position.x, b.position.z, 2.4 + b.def.radius)) {
+      const dmg = 18 + Math.floor(Math.random() * 8);
+      b.hit(dmg);
+      combatUi.float(String(dmg), b.position.clone().setY(b.position.y + 2.6), 'deal');
     }
   }, 1250);
 });
@@ -122,12 +134,13 @@ async function start() {
   const village = state.loc === 'village';
   document.querySelector('.hud__place b').textContent = LOCS[state.loc][0];
   document.querySelector('.hud__place span').textContent = LOCS[state.loc][1];
-  await preload([...(SKINS[currentSkin()].model ? [charUrl(SKINS[currentSkin()].model)] : []),
+  await preload([...(SKINS[currentSkin()].model ? [charUrl(SKINS[currentSkin()].model)] : []), ...(village ? [] : [charUrl(BOSS_DEF.model)]),
     ...(village ? [...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')] : [])]);
   state.world = village ? await buildWorld(scene, renderer)
     : state.loc === 'arena' ? await buildArena(scene, renderer) : await buildFireland(scene, renderer);
   if (!village) Object.assign(HERO, { x: 0, z: 3, face: 180 });
   await setSkin(currentSkin());
+  if (state.world.bossSpawn) await spawnBoss(state.world.bossSpawn);
   for (const def of village ? NPCS : []) {
     const npc = CHAR_MODE_DEFAULT === 'hd2d' && def.sprite
       ? new SpriteNpc(await loadSprite(def.sprite), def, view.camera)
@@ -174,6 +187,49 @@ bind('btn-skin', async () => {
   ui.toast(`Облик: ${SKINS[next].name}`);
 });
 
+/* ---------- бой с боссом ---------- */
+async function spawnBoss(at) {
+  const boss = await Boss.create(BOSS_DEF, at);
+  scene.add(boss.object);
+  state.boss = boss;
+  boss.onHitHero = (dmg) => hurtHero(dmg);
+  boss.onEvent = (ev) => {
+    if (ev === 'notice') ui.toast(`${boss.name} заметил тебя!`, 1600);
+    if (ev === 'dead') ui.toast(`${boss.name} повержен!`, 2600);
+  };
+  combatUi.heroHp(state.hp, state.maxHp);
+}
+
+function hurtHero(dmg) {
+  const hero = state.hero;
+  if (hero.dead) return;
+  state.hp = Math.max(0, state.hp - dmg); state.hurtT = 0;
+  combatUi.hurt();
+  combatUi.float(`−${dmg}`, hero.position.clone().setY(hero.position.y + 2), 'take');
+  combatUi.heroHp(state.hp, state.maxHp);
+  if (state.hp <= 0) {
+    hero.playOnce('death'); hero.dead = true; hero.speed = 0;
+    ui.toast('Ты пал… Возрождение через 3 секунды', 2800);
+    setTimeout(() => {
+      hero.dead = false; hero.oneshot = null;
+      hero.position.set(HERO.x, 0, HERO.z);
+      state.hp = state.maxHp; combatUi.heroHp(state.hp, state.maxHp);
+      hero.updateState(true);
+    }, 3000);
+  } else if (!hero.oneshot) hero.playOnce('hit');
+}
+
+function updateCombat(dt) {
+  const { boss, hero } = state;
+  if (!boss) return;
+  boss.update(dt, hero, state.world.colliders, state.world.heightAt);
+  // восстановление: через 5 с после последнего удара — 6 ед./с
+  state.hurtT += dt;
+  if (!hero.dead && state.hurtT > 5 && state.hp < state.maxHp) { state.hp = Math.min(state.maxHp, state.hp + 6 * dt); combatUi.heroHp(state.hp, state.maxHp); }
+  combatUi.boss(boss);
+  combatUi.update(dt, view.camera);
+}
+
 /* ---------- кадр ---------- */
 const timer = new THREE.Timer();
 let fpsT = 0, fpsN = 0, slow = 0;
@@ -181,8 +237,8 @@ const fpsEl = document.getElementById('fps');
 
 function frame() {
   timer.update();
-  const dt = Math.min(timer.getDelta(), 1 / 20);
-  fpsT += dt; fpsN++;
+  const raw = timer.getDelta(), dt = Math.min(raw, 1 / 20);
+  fpsT += raw; fpsN++;                         // счётчик — по реальному времени (dt ограничен для физики и иначе завышал к/с)
   if (fpsT > 1) {
     state.fps = Math.round(fpsN / fpsT); fpsT = 0; fpsN = 0;
     fpsEl.textContent = `${state.fps} к/с · ${QUALITY[state.quality].name}`;
@@ -199,6 +255,7 @@ function frame() {
   hero.update(dt);
   updateWeapon(state.weapon, dt);
   for (const d of world.dummies || []) d.update(dt);
+  updateCombat(dt);
   // рельеф: герой стоит на земле; у локации свои эффекты (лава, пепел)
   if (world.heightAt) hero.position.y = world.heightAt(hero.position.x, hero.position.z);
   world.update?.(dt, timer.getElapsed(), hero);
@@ -214,7 +271,7 @@ function frame() {
 function moveHero(dt) {
   const hero = state.hero, a = input.axis;
   // во время удара герой стоит на месте — иначе ноги «скользят»
-  if (ui.dialogOpen || !a.active || hero.state === 'attack') { hero.speed = 0; return; }
+  if (ui.dialogOpen || !a.active || hero.dead || hero.state === 'attack') { hero.speed = 0; return; }
   const { forward, right } = view.basis();
   const dir = new THREE.Vector2().addScaledVector(right, a.x).addScaledVector(forward, -a.y).normalize();
   const speed = state.run ? MOVE.run : MOVE.walk;
@@ -224,6 +281,11 @@ function moveHero(dt) {
   for (const n of state.npcs) {                          // жители тоже препятствия
     const dx = p.x - n.position.x, dz = p.z - n.position.z, d = Math.hypot(dx, dz), min = MOVE.radius + 0.35;
     if (d < min && d > 0) { p.x = n.position.x + (dx / d) * min; p.z = n.position.z + (dz / d) * min; }
+  }
+  const b = state.boss;                                   // сквозь босса не пройти
+  if (b?.alive) {
+    const dx = p.x - b.position.x, dz = p.z - b.position.z, d = Math.hypot(dx, dz), min = MOVE.radius + b.def.radius;
+    if (d < min && d > 0) { p.x = b.position.x + (dx / d) * min; p.z = b.position.z + (dz / d) * min; }
   }
   hero.speed = Math.hypot(p.x - ox, p.z - oz) / dt;      // реальная скорость: упёрся в стену — анимация замедляется
   hero.turnTo(Math.atan2(dir.x, dir.y), dt, MOVE.turn);

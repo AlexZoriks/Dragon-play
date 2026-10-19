@@ -170,6 +170,8 @@ function makeFire(grip, bladeLen, bladeStart) {
         let root = grip; while (root.parent) root = root.parent;
         if (!root.isScene) return;
         root.add(points);
+        grip.updateWorldMatrix(true, false);
+        for (let i = 0; i < N; i++) { spawn(i); age[i] = Math.random(); }   // первые частицы — уже на клинке, а не в центре мира
       }
       grip.updateWorldMatrix(true, false);
       for (let i = 0; i < N; i++) {

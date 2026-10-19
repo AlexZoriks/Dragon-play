@@ -99,7 +99,8 @@ export async function buildFireland(scene, renderer) {
 
   // пепел висит вокруг героя, чтобы не тратить частицы на всю карту
   const update = (dt, t, hero) => { lava.update(t); ash.update(dt); if (hero) ash.follow(hero.position.x, hero.position.z); };
-  return { colliders, occluders: [], doors: [], lights: { hemi, sun }, dummies: [], update, heightAt };
+  // логово Лавового демона: на открытом месте к северу от старта, смотрит в сторону героя
+  return { colliders, occluders: [], doors: [], lights: { hemi, sun }, dummies: [], update, heightAt, bossSpawn: { x: -8, z: 15, face: 146 } };
 }
 
 /* --- земля: вершинные цвета (пепел, базальт, раскалённая кромка у лавы) + мелкая фактура --- */

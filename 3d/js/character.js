@@ -62,8 +62,9 @@ export class Character {
     this.state = null;
     this.oneshot = null;
     this.talking = false;
+    this.dead = false;
     this.mixer.addEventListener('finished', (e) => {
-      if (e.action === this.oneshot) { this.oneshot = null; this.updateState(true); }
+      if (e.action === this.oneshot && !this.dead) { this.oneshot = null; this.updateState(true); }
     });
     this.play('idle');
   }
@@ -90,7 +91,7 @@ export class Character {
   }
 
   updateState(force = false) {
-    if (this.oneshot && !force) return;
+    if (this.dead || (this.oneshot && !force)) return;     // погибший лежит, пока игра его не поднимет
     const key = this.talking ? 'idle' : this.speed > 3.2 ? 'run' : this.speed > 0.15 ? 'walk' : 'idle';
     this.play(key);
     // темп шага подстраивается под реальную скорость, чтобы ноги не «скользили»
