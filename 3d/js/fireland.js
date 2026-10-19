@@ -47,6 +47,7 @@ function distToPolyline(x, z, pts) {
 export function lavaDist(x, z) {
   let d = 1e9;
   for (const r of LAVA) d = Math.min(d, distToPolyline(x, z, r.pts) - r.w);
+  d += (fbm(x * 0.22 + 11, z * 0.22 - 4) - 0.5) * 1.6;            // неровный берег вместо прямых линий
   // мост: плавный каменный перешеек, без ступенек
   for (const [bx, bz] of BRIDGES) d = THREE.MathUtils.lerp(d, Math.max(d, 1.6), 1 - THREE.MathUtils.smoothstep(Math.hypot(x - bx, z - bz), 2, 4));
   return d;
@@ -58,7 +59,7 @@ export function heightAt(x, z) {
   let h = fbm(x * 0.06 + 3, z * 0.06 + 7) * 1.4;
   h += Math.max(0, r - 0.55) ** 2 * 26 * (0.6 + fbm(x * 0.04, z * 0.04));   // гряды по краю
   const ld = lavaDist(x, z);
-  if (ld < 3) h = THREE.MathUtils.lerp(-0.45, h, THREE.MathUtils.smoothstep(ld, -0.5, 3));
+  if (ld < 1.6) h = THREE.MathUtils.lerp(-0.9, h, THREE.MathUtils.smoothstep(ld, -0.4, 1.6));
   return h;
 }
 
@@ -113,7 +114,7 @@ function makeGround() {
     const n = fbm(x * 0.15, z * 0.15), ld = lavaDist(x, z);
     c.copy(basalt).lerp(ash, THREE.MathUtils.smoothstep(n, 0.35, 0.75) * 0.8);
     c.lerp(scorched, THREE.MathUtils.clamp(1 - ld / 6, 0, 1) * 0.7);
-    if (ld < 1.2) c.lerp(hot, THREE.MathUtils.clamp(1 - ld / 1.2, 0, 1) * 0.6);
+    if (ld < 1.6) c.lerp(hot, THREE.MathUtils.clamp(1 - (ld - 0.3) / 1.3, 0, 1) * 0.55);   // раскалённая кромка берега
     c.toArray(col, i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -135,62 +136,94 @@ function grainTexture() {
   return t;
 }
 
-/* --- лава на текстурах ambientCG (CC0): Lava001 — остывающая корка, Lava005 — жидкая горячая лава.
-   Ближе к берегу — корка, к середине русла — горячая (маска расстояния до берега запекается в текстуру).
-   Течение без растягивания: два слоя со сдвигом по времени перетекают друг в друга (flow-crossfade).
-   Свечение берётся из карты Emission и усиливается выше 1 — его подхватывает bloom. --- */
+/* --- лава: свой шейдер, без текстур (весит 0 КБ, не «мылится» и не растягивается).
+   Лава — лента вдоль каждого русла с координатами (s — вдоль течения в метрах, a — поперёк),
+   поэтому течение всегда идёт по руслу, даже на поворотах.
+   Картинка: плиты остывшей чёрной корки (ячейки Вороного) плывут по течению, между ними светятся
+   раскалённые трещины; к середине русла плиты тают и открывают жидкую жёлто-оранжевую лаву.
+   Значения ярче 1 подхватывает bloom — получается свечение без источников света. --- */
+const LAVA_Y = -0.3;
 function makeLava() {
-  const L = new THREE.TextureLoader(), dir = 'assets/textures/lava/';
-  const tex = (f, srgb) => {
-    const t = L.load(dir + f); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
-    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  };
-  // маска: 0 — у берега, 1 — середина русла (по lavaDist), 256×256 на всю карту
-  const M = 256, data = new Uint8Array(M * M);
-  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
-    const x = (i + 0.5) / M * SIZE - HALF, z = (j + 0.5) / M * SIZE - HALF;
-    data[j * M + i] = Math.round(THREE.MathUtils.clamp(-lavaDist(x, z) / 1.6, 0, 1) * 255);
-  }
-  const mask = new THREE.DataTexture(data, M, M, THREE.RedFormat); mask.magFilter = mask.minFilter = THREE.LinearFilter; mask.needsUpdate = true;
-
-  const geo = new THREE.PlaneGeometry(SIZE, SIZE, 1, 1); geo.rotateX(-Math.PI / 2);
   const mat = new THREE.ShaderMaterial({
-    uniforms: {
-      t: { value: 0 }, mask: { value: mask }, size: { value: SIZE },
-      cC: { value: tex('crust_color.jpg', true) }, cE: { value: tex('crust_emission.jpg', true) }, cN: { value: tex('crust_normal.jpg') },
-      hC: { value: tex('hot_color.jpg', true) }, hE: { value: tex('hot_emission.jpg', true) }, hN: { value: tex('hot_normal.jpg') },
-      sunDir: { value: new THREE.Vector3(-20, 18, -10).normalize() },
-    },
+    uniforms: { t: { value: 0 } },
     fog: false,
-    vertexShader: 'varying vec2 vP; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }',
+    vertexShader: `
+      attribute float edge; varying vec2 vUv; varying float vEdge;
+      void main(){ vUv = uv; vEdge = edge; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: `
-      uniform float t, size; uniform sampler2D mask, cC, cE, cN, hC, hE, hN; uniform vec3 sunDir; varying vec2 vP;
-      // два слоя течения со сдвигом фазы: пока один «растягивается», второй его плавно заменяет
-      vec3 flowTex(sampler2D s, vec2 uv, vec2 dir, float speed) {
-        float p0 = fract(t * speed), p1 = fract(t * speed + 0.5);
-        float w = abs(p0 - 0.5) * 2.0;
-        return mix(texture2D(s, uv + dir * p0).rgb, texture2D(s, uv + dir * p1 + 0.37).rgb, w);
+      uniform float t; varying vec2 vUv; varying float vEdge;
+      vec2 h2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
+      float n2(vec2 p){
+        vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(h2(i).x, h2(i + vec2(1.0, 0.0)).x, f.x), mix(h2(i + vec2(0.0, 1.0)).x, h2(i + vec2(1.0)).x, f.x), f.y);
       }
-      void main() {
-        float m = texture2D(mask, vP / size + 0.5).r;               // 0 у берега … 1 в середине
-        vec2 uv = vP * 0.16;
-        vec2 dir = vec2(0.35, 0.12);
-        vec3 crC = flowTex(cC, uv, dir * 0.6, 0.03), crE = flowTex(cE, uv, dir * 0.6, 0.03), crN = flowTex(cN, uv, dir * 0.6, 0.03);
-        vec3 hoC = flowTex(hC, uv * 0.8, dir, 0.06), hoE = flowTex(hE, uv * 0.8, dir, 0.06), hoN = flowTex(hN, uv * 0.8, dir, 0.06);
-        float k = smoothstep(0.15, 0.85, m);
-        vec3 col = mix(crC, hoC, k), emi = mix(crE, hoE, k);
-        vec3 n = normalize(mix(crN, hoN, k) * 2.0 - 1.0); n = normalize(vec3(n.x, n.z, -n.y));   // карта нормалей → мировой Y вверх
-        float lit = 0.25 + 0.75 * max(dot(n, sunDir), 0.0);
-        float pulse = 0.9 + 0.1 * sin(t * 1.7 + vP.x * 0.3 + vP.y * 0.2);
-        vec3 c = col * lit * 0.35 + emi * (1.6 + 0.8 * k) * pulse;    // яркие прожилки >1 светятся через bloom
-        gl_FragColor = vec4(c, 1.0);
+      float fbm(vec2 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * n2(p); p = p * 2.03 + 17.1; a *= 0.5; } return s; }
+      // x — расстояние до центра ячейки, y — до её границы (F2 − F1): у границы — трещина
+      vec2 vor(vec2 p){
+        vec2 i = floor(p), f = fract(p); float d1 = 8.0, d2 = 8.0;
+        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+          vec2 g = vec2(float(x), float(y)), o = h2(i + g);
+          o = 0.5 + 0.35 * sin(t * 0.4 + 6.2831 * o);              // плиты медленно «дышат»
+          vec2 r = g + o - f; float d = dot(r, r);
+          if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+        }
+        return vec2(sqrt(d1), sqrt(d2) - sqrt(d1));
+      }
+      void main(){
+        float m = clamp((vEdge + 0.4) / 2.2, 0.0, 1.0);             // 0 у берега … 1 в середине
+        vec2 p = vec2(vUv.x - t * 0.35, vUv.y);                       // одна скорость поперёк русла — иначе узор растягивается в полосы
+        vec2 warp = vec2(fbm(p * 0.35 + vec2(0.0, t * 0.05)), fbm(p * 0.35 + 5.2)) - 0.5;
+        vec2 q = p * 0.7 + warp * 1.4;
+        vec2 v = vor(q);
+        float nz = fbm(q * 1.3 + 3.0);
+        float crack = 1.0 - smoothstep(0.0, mix(0.03, 0.2, m) * (0.6 + 0.8 * nz), v.y);
+        float molten = smoothstep(0.8, 1.05, m + (nz - 0.5) * 0.6) * 0.85;
+        float heat = clamp(max(crack, molten) * (0.75 + 0.5 * nz), 0.0, 1.2);
+        vec3 crust = vec3(0.045, 0.032, 0.03) * (0.6 + 0.9 * fbm(q * 5.0))
+                   + vec3(0.1, 0.012, 0.0) * (1.0 - smoothstep(0.0, 0.35, v.y));   // подсвет снизу у края плиты
+        vec3 hot = mix(vec3(0.55, 0.04, 0.0), vec3(1.3, 0.3, 0.02), smoothstep(0.2, 0.7, heat));
+        hot = mix(hot, vec3(1.9, 1.05, 0.3), smoothstep(0.8, 1.15, heat));
+        float pulse = 0.9 + 0.1 * sin(t * 1.5 + vUv.x * 0.4);
+        gl_FragColor = vec4(mix(crust, hot * pulse, smoothstep(0.05, 0.4, heat)), 1.0);
       }`,
   });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.y = -0.3;
-  mesh.userData.noAO = true;
-  return { mesh, update: (t) => { mat.uniforms.t.value = t; } };
+  const group = new THREE.Group();
+  for (const r of LAVA) {
+    const m = new THREE.Mesh(riverRibbon(r), mat);
+    m.userData.noAO = true;
+    m.renderOrder = 1;                       // после земли: скрытая под берегом часть не считается
+    group.add(m);
+  }
+  return { mesh: group, update: (t) => { mat.uniforms.t.value = t; } };
+}
+
+/* Лента вдоль ломаной русла: шире самого русла (края уходят под берег), стыки — «в ус» */
+function riverRibbon({ w, pts }) {
+  const half = w + 2, ACROSS = 6, pos = [], uv = [], edge = [], idx = [];
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x, z] = pts[i];
+    const d0 = i > 0 ? new THREE.Vector2(x - pts[i - 1][0], z - pts[i - 1][1]).normalize() : null;
+    const d1 = i < pts.length - 1 ? new THREE.Vector2(pts[i + 1][0] - x, pts[i + 1][1] - z).normalize() : null;
+    const tan = (d0 && d1 ? d0.clone().add(d1) : (d0 || d1)).normalize();
+    const miter = d0 && d1 ? 1 / Math.max(0.5, tan.dot(d1)) : 1;
+    if (i > 0) s += Math.hypot(x - pts[i - 1][0], z - pts[i - 1][1]);
+    for (let j = 0; j <= ACROSS; j++) {
+      const a = -half + (2 * half * j) / ACROSS;
+      pos.push(x - tan.y * a * miter, LAVA_Y, z + tan.x * a * miter);
+      uv.push(s, a); edge.push(w - Math.abs(a));
+    }
+  }
+  for (let i = 0; i < pts.length - 1; i++) for (let j = 0; j < ACROSS; j++) {
+    const k = i * (ACROSS + 1) + j, n = k + ACROSS + 1;
+    idx.push(k, k + 1, n, k + 1, n + 1, n);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('edge', new THREE.Float32BufferAttribute(edge, 1));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
 }
 
 /* --- пепел и искры. Частицы живут в мире (не едут вместе с героем): когда частица уходит
