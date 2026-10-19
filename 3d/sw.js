@@ -1,6 +1,6 @@
 /* Офлайн-режим 3D-версии: всё, что игра однажды загрузила, сохраняется на устройстве.
    Код и страница — «сначала сеть» (обновления приходят сразу), модели и библиотеки — «сначала кэш». */
-const CODE = 'g3d-code-v11', DATA = 'g3d-data-v4';
+const CODE = 'g3d-code-v12', DATA = 'g3d-data-v4';
 const CORE = ['./', 'index.html', 'css/game.css', 'js/main.js', 'js/config.js', 'js/assets.js', 'js/world.js', 'js/character.js',
   'js/npc.js', 'js/sprite.js', 'js/camera.js', 'js/input.js', 'js/ui.js', 'js/collision.js', 'js/post.js', 'js/arena.js', 'js/weapon.js', 'js/fireland.js', 'js/boss.js', 'js/combat-ui.js', 'js/minimap.js'];
 

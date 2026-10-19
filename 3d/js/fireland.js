@@ -88,19 +88,33 @@ function baseHeight(x, z) {
 }
 
 /* --- русла: плотные точки через 2 м с высотой поверхности лавы (лавопад стекает вниз) --- */
+/* Сглаживание ломаной (срез углов Чайкина): изгибы русла плавные, лента лавы на поворотах не складывается */
+function chaikin(pts, iter = 3) {
+  let p = pts;
+  for (let k = 0; k < iter; k++) {
+    const q = [p[0]];
+    for (let i = 0; i < p.length - 1; i++) {
+      const [ax, az] = p[i], [bx, bz] = p[i + 1];
+      q.push([ax * 0.75 + bx * 0.25, az * 0.75 + bz * 0.25], [ax * 0.25 + bx * 0.75, az * 0.25 + bz * 0.75]);
+    }
+    q.push(p[p.length - 1]); p = q;
+  }
+  return p;
+}
 const RIVERS = LAVA.map((r) => {
-  const dense = [];
-  for (let i = 0; i < r.pts.length - 1; i++) {
-    const [ax, az] = r.pts[i], [bx, bz] = r.pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
+  const dense = [], pts = chaikin(r.pts);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
     for (let k = 0; k < n; k++) dense.push([ax + (bx - ax) * k / n, az + (bz - az) * k / n, LAVA_Y]);
   }
-  dense.push([...r.pts[r.pts.length - 1], LAVA_Y]);
+  dense.push([...pts[pts.length - 1], LAVA_Y]);
   if (r.fall) {
     for (const p of dense) p[2] = baseHeight(p[0], p[1]) - 0.9;
     for (let i = 1; i < dense.length; i++) dense[i][2] = Math.min(dense[i][2], dense[i - 1][2]);    // лава течёт только вниз
     for (let pass = 0; pass < 3; pass++) for (let i = 1; i < dense.length - 1; i++) dense[i][2] = (dense[i - 1][2] + dense[i][2] + dense[i + 1][2]) / 3;
-    dense[dense.length - 1][2] = LAVA_Y;
-    for (let i = dense.length - 2; i >= 0; i--) dense[i][2] = Math.max(dense[i][2], LAVA_Y);
+    for (let i = dense.length - 1; i >= 0; i--) dense[i][2] = Math.max(dense[i][2], LAVA_Y + 0.06);
+    const main = chaikin(LAVA[0].pts);
+    while (dense.length > 2 && distToPolyline(dense[dense.length - 2][0], dense[dense.length - 2][1], main) < LAVA[0].w - 1) dense.pop();
   }
   return { w: r.w, dense };
 });
@@ -188,7 +202,8 @@ function prepareBridges(gltf) {
     const a = p[Math.max(0, bi - 2)], c = p[Math.min(p.length - 1, bi + 2)];
     const tx = c[0] - a[0], tz = c[1] - a[1], tl = Math.hypot(tx, tz);
     const ux = -tz / tl, uz = tx / tl;                              // ось моста — поперёк реки
-    return { x: bx, z: bz, ux, uz, vx: -uz, vz: ux, rot: Math.atan2(-uz, ux), prof, step, endH: [prof[0], prof[n - 1]] };
+    return { x: p[bi][0], z: p[bi][1], ux, uz, vx: -uz, vz: ux,   // центр — на оси (сглаженного) русла
+             rot: Math.atan2(-uz, ux), prof, step, endH: [prof[0], prof[n - 1]] };
   });
   BRIDGE = { L, W, k, box, Y0, items };
 }
@@ -204,13 +219,14 @@ function addBridges(scene, gltf, colliders) {
     o.position.set(-(box.min.x + box.max.x) / 2 * k, -box.min.y * k + Y0, -(box.min.z + box.max.z) / 2 * k);
     g.add(o); g.position.set(b.x, 0, b.z); g.rotation.y = b.rot;
     scene.add(g);
-    for (const s of [-1, 1]) colliders.addBox(b.x + b.vx * s * (W / 2 - 0.15), b.z + b.vz * s * (W / 2 - 0.15), 6.5, 0.18, b.rot);   // перила над лавой
+    // перила и каменные торцы по всей длине: на мост заходят только прямо, сбоку — стена
+    for (const s of [-1, 1]) colliders.addBox(b.x + b.vx * s * (W / 2 - 0.1), b.z + b.vz * s * (W / 2 - 0.1), L / 2 + 0.4, 0.25, b.rot);
   }
 }
 
 /* ------------------------------------------------------------------------------------------ */
 export async function buildFireland(scene, renderer, { quality = 'medium' } = {}) {
-  const colliders = new Colliders(HALF - 3);
+  const colliders = new Colliders(87);                       // граница — перед скальными стенами (и в разрывах у лавы)
   scene.background = new THREE.Color(0x1a0d0a);
   scene.fog = new THREE.FogExp2(0x1c0c08, 0.012);
 
@@ -250,11 +266,13 @@ export async function buildFireland(scene, renderer, { quality = 'medium' } = {}
     });
   }
   if (BRIDGE) addBridges(scene, bridgeGltf, colliders);
+  scene.add(await makeRoads(renderer));
   await addProps(scene, colliders);
+  const occluders = await addCliffs(scene, colliders);
 
   const update = (dt, t, hero) => { lava.update(t); ash.update(dt); if (hero) ash.follow(hero.position.x, hero.position.y, hero.position.z); };
   return {
-    colliders, occluders: [], doors: [], lights: { hemi, sun }, dummies: [], update, heightAt,
+    colliders, occluders, doors: [], lights: { hemi, sun }, dummies: [], update, heightAt,
     size: SIZE, start: FIRE_START, bossSpawn: LAIR, maxSlope: 1.15,
   };
 }
@@ -572,4 +590,109 @@ async function addProps(scene, colliders) {
       placed++;
     }
   }
+}
+
+/* --- скальные стены по краю карты (модульные сегменты Meshy, лицом внутрь).
+   Каждая копия — отдельный объект: камера видит 3–6 сегментов, остальные отсекаются и не рисуются.
+   Не ставим у жерла вулкана и там, где лава уходит за край карты. --- */
+async function addCliffs(scene, colliders) {
+  let gltf;
+  const occluders = [];
+  try { gltf = await loadGltf('assets/models/fire/cliff_wall.glb'); } catch (e) { return occluders; }
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const WIDTH = 14, k = WIDTH / (box.max.x - box.min.x), depth = (box.max.z - box.min.z) * k;
+  let seed = 23; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const D = 86, STEP = 12.5;                                        // сегменты внахлёст, без щелей
+  const edges = [                                                   // [начало, направление вдоль края, поворот лицом к центру]
+    { at: (t) => [t, -D], rot: 0 },            // север: лицом на юг (+z)
+    { at: (t) => [t, D], rot: Math.PI },       // юг
+    { at: (t) => [D, t], rot: -Math.PI / 2 },  // восток
+    { at: (t) => [-D, t], rot: Math.PI / 2 },  // запад
+  ];
+  for (const e of edges) {
+    for (let t = -D; t <= D + 0.1; t += STEP) {
+      const [x, z] = e.at(t);
+      if (Math.hypot(x - V.x, z - V.z) < 34) continue;                  // склон вулкана
+      if (lavaInfo(x, z)[0] < 6) continue;                              // лава уходит за край
+      const s = 0.9 + rnd() * 0.3, rot = e.rot + (rnd() - 0.5) * 0.25;
+      const o = gltf.scene.clone(true);
+      o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; m.material = m.material.clone(); } });   // своя прозрачность у каждой
+      sharpen(o);
+      o.scale.setScalar(k * s);
+      o.position.set(-(box.min.x + box.max.x) / 2 * k * s, -box.min.y * k * s, -(box.min.z + box.max.z) / 2 * k * s);
+      const g = new THREE.Group(); g.add(o);
+      g.position.set(x, groundHeight(x, z) - 1.2, z); g.rotation.y = rot;
+      scene.add(g);
+      occluders.push(g);                                             // заслоняет героя — становится полупрозрачной
+      colliders.addBox(x, z, (WIDTH * s) / 2, (depth * s) / 2, rot);
+    }
+  }
+  return occluders;
+}
+
+/* --- мощёные дороги по тропам плана: лента из каменных плит (Volcanic Rock Tiles, Poly Haven), повторяет рельеф,
+   поднимается по насыпям на мосты. Края неровные, вдоль них — бордюр из камней (один вызов отрисовки). --- */
+async function makeRoads(renderer) {
+  const L = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  let col, nor;
+  try {
+    [col, nor] = await Promise.all([L.loadAsync('assets/textures/ground/tiles_col_1k.jpg'), L.loadAsync('assets/textures/ground/tiles_nor_1k.jpg')]);
+  } catch (e) { return new THREE.Group(); }
+  for (const t of [col, nor]) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = aniso; }
+  col.colorSpace = THREE.SRGBColorSpace;
+  const pos = [], uv = [], idx = [], stones = [];
+  const HALF_W = 1.6, ACROSS = 4, TILE = 2.4;
+  for (const path of PATHS) {
+    const pts = chaikin(path, 2), dense = [];
+    for (let i = 0; i < pts.length - 1; i++) {                      // точки через 0.8 м
+      const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.8));
+      for (let k = 0; k < n; k++) dense.push([ax + (bx - ax) * k / n, az + (bz - az) * k / n]);
+    }
+    dense.push(pts[pts.length - 1]);
+    let run = null, s = 0;
+    const flush = () => { run = null; };
+    for (let i = 0; i < dense.length; i++) {
+      const [x, z] = dense[i];
+      const onDeck = isFinite(deckAt(x, z)), wet = lavaInfo(x, z)[0] < 0.6, far = Math.abs(x) > 84 || Math.abs(z) > 84;
+      if (onDeck || wet || far) { flush(); continue; }               // по мосту и через лаву дорога не идёт
+      const a0 = dense[Math.max(0, i - 2)], a1 = dense[Math.min(dense.length - 1, i + 2)];
+      const tl = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) || 1, tx = (a1[0] - a0[0]) / tl, tz = (a1[1] - a0[1]) / tl;
+      if (i > 0) s += Math.hypot(x - dense[i - 1][0], z - dense[i - 1][1]);
+      const wob = 1 + (fbm(x * 0.4, z * 0.4) - 0.5) * 0.35;           // неровная ширина
+      const row = pos.length / 3;
+      for (let j = 0; j <= ACROSS; j++) {
+        const a = (j / ACROSS - 0.5) * 2 * HALF_W * wob, px = x - tz * a, pz = z + tx * a;
+        pos.push(px, heightAt(px, pz) + 0.05, pz);
+        uv.push((a + HALF_W) / TILE, s / TILE);
+      }
+      if (run !== null) for (let j = 0; j < ACROSS; j++) { const k = run + j, n = row + j; idx.push(k, n, k + 1, k + 1, n, n + 1); }
+      run = row;
+      if (i % 1 === 0) for (const side of [-1, 1]) {                  // бордюр из камней
+        const a = side * (HALF_W * wob + 0.15) + (hash(x, z) - 0.5) * 0.2, px = x - tz * a, pz = z + tx * a;
+        stones.push([px, heightAt(px, pz), pz, 0.22 + hash(z * 3.1, x) * 0.25]);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx); g.computeVertexNormals();
+  let ny = 0; for (let i = 1; i < g.attributes.normal.count * 3; i += 3) ny += g.attributes.normal.array[i];
+  if (ny < 0) { for (let i = 0; i < idx.length; i += 3) [idx[i + 1], idx[i + 2]] = [idx[i + 2], idx[i + 1]]; g.setIndex(idx); g.computeVertexNormals(); }   // лицом вверх
+  const mat = new THREE.MeshStandardMaterial({ map: col, normalMap: nor, color: 0xe2d6cc, roughness: 0.85,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  const road = new THREE.Mesh(g, mat);
+  road.receiveShadow = true;
+  const group = new THREE.Group(); group.add(road);
+  // бордюр: неровные камни одним вызовом
+  const base = new THREE.DodecahedronGeometry(0.5, 0);
+  const curb = new THREE.InstancedMesh(base, new THREE.MeshStandardMaterial({ color: 0x2a2320, roughness: 0.9, flatShading: true }), stones.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  stones.forEach(([x, y, z, r], i) => {
+    e.set(hash(x, 1) * 6, hash(z, 2) * 6, 0); q.setFromEuler(e); sc.set(r * 1.3, r * 0.7, r);
+    m.compose(v.set(x, y + r * 0.15, z), q, sc); curb.setMatrixAt(i, m);
+  });
+  curb.castShadow = true; curb.receiveShadow = true;
+  group.add(curb);
+  return group;
 }
