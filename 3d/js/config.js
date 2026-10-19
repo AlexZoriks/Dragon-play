@@ -5,10 +5,10 @@ export const HERO_HEIGHT = 1.8;          // единый рост: под нег
 export const ENV_SCALE = 4.5;             // масштаб зданий и природы из пака KayKit Medieval
 
 export const CAMERA = {
-  pitch: 52,            // наклон камеры, градусы от горизонта
-  distance: 16,         // расстояние до героя
-  minDistance: 8,
-  maxDistance: 30,
+  pitch: 46,            // наклон камеры, градусы от горизонта (ниже — герой крупнее и виден объём)
+  distance: 11,         // расстояние до героя: герой занимает ~1/5 высоты экрана
+  minDistance: 5,
+  maxDistance: 24,
   yawStep: 45,          // шаг поворота кнопками
   follow: 6,            // жёсткость следования (больше — быстрее)
 };
