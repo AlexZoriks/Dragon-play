@@ -116,18 +116,96 @@ function lavaInfo(x, z) {
     }
   }
   d += (fbm(x * 0.22 + 11, z * 0.22 - 4) - 0.5) * 1.6;                       // неровный берег
-  for (const [bx, bz] of BRIDGES) d = lerp(d, Math.max(d, 1.8), 1 - smoothstep(Math.hypot(x - bx, z - bz), 2.5, 5));
+  if (!BRIDGE) for (const [bx, bz] of BRIDGES) d = lerp(d, Math.max(d, 1.8), 1 - smoothstep(Math.hypot(x - bx, z - bz), 2.5, 5));   // без модели моста — земляной перешеек
   return [d, y];
 }
 export const lavaDist = (x, z) => lavaInfo(x, z)[0];
 
 /** Высота земли в точке: русла врезаны, берега всегда выше лавы */
-export function heightAt(x, z) {
+function groundHeight(x, z) {
   let h = baseHeight(x, z);
   const [ld, ly] = lavaInfo(x, z);
   if (ld < 3.6) h = Math.max(h, ly + 0.45);                        // берег всегда выше лавы (и на склоне вулкана)
   if (ld < 1.8) h = lerp(ly - 0.7, h, smoothstep(ld, -0.4, 1.8));
   return h;
+}
+
+/* --- мосты-модели: настил снимается с самой модели (высота верхних вершин вдоль моста),
+   у концов — пологие подъезды из земли, чтобы не было ступеньки. По бокам над лавой — перила-препятствия. --- */
+let BRIDGE = null;                 // { L, W, items: [{ x, z, ux, uz, vx, vz, rot, prof, step, endH }] }
+const bridgeLocal = (b, x, z) => { const dx = x - b.x, dz = z - b.z; return [dx * b.ux + dz * b.uz, dx * b.vx + dz * b.vz]; };
+function deckAt(x, z) {
+  let best = -Infinity;
+  if (!BRIDGE) return best;
+  for (const b of BRIDGE.items) {
+    const [u, v] = bridgeLocal(b, x, z);
+    if (Math.abs(v) > BRIDGE.W / 2 - 0.35 || Math.abs(u) > BRIDGE.L / 2) continue;
+    const f = (u + BRIDGE.L / 2) / b.step, i = clamp(Math.floor(f), 0, b.prof.length - 2), t = clamp(f - i, 0, 1);
+    best = Math.max(best, lerp(b.prof[i], b.prof[i + 1], t));
+  }
+  return best;
+}
+function rampAt(x, z, ground) {
+  let best = -Infinity;
+  if (!BRIDGE) return best;
+  const L2 = BRIDGE.L / 2, RUN = 5;                                 // насыпь 5 м — уклон не круче 1:2
+  for (const b of BRIDGE.items) {
+    const [u, v] = bridgeLocal(b, x, z), au = Math.abs(u);
+    if (Math.abs(v) > BRIDGE.W / 2 + 0.6 || au < L2 - 0.25 || au > L2 + RUN) continue;
+    const end = u > 0 ? b.endH[1] : b.endH[0];
+    best = Math.max(best, lerp(end, ground, clamp((au - L2) / RUN, 0, 1)));
+  }
+  return best;
+}
+/** Земля для сетки рельефа: с подъездами к мостам, без настила */
+function terrainHeight(x, z) { const g = groundHeight(x, z); return Math.max(g, rampAt(x, z, g)); }
+/** Высота, на которой стоит персонаж: земля, подъезд или настил моста */
+export function heightAt(x, z) { return Math.max(terrainHeight(x, z), deckAt(x, z)); }
+
+/** Ставит мосты поперёк главной реки и снимает профиль настила. Вызывается до постройки рельефа. */
+function prepareBridges(gltf) {
+  const L = 16, root = gltf.scene, box = new THREE.Box3().setFromObject(root);
+  const k = L / (box.max.x - box.min.x), W = (box.max.z - box.min.z) * k;
+  const verts = [];
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const p = o.geometry.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld); verts.push([v.x, v.y, v.z]); }
+  });
+  const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2, Y0 = -0.45;   // опоры чуть утоплены в берег
+  const step = 0.5, n = Math.round(L / step) + 1, prof0 = new Float32Array(n).fill(-Infinity);
+  for (const [x, y, z] of verts) {                                 // верх настила — по средней полосе (без перил)
+    if (Math.abs((z - cz) * k) > W * 0.22) continue;
+    const i = Math.round(((x - cx) * k + L / 2) / step);
+    if (i >= 0 && i < n) prof0[i] = Math.max(prof0[i], (y - box.min.y) * k + Y0);
+  }
+  for (let i = 0; i < n; i++) if (!isFinite(prof0[i])) prof0[i] = isFinite(prof0[i - 1]) ? prof0[i - 1] : Y0;
+  const prof = prof0.map((_, i) => { let s = 0, c = 0; for (let j = i - 2; j <= i + 2; j++) if (j >= 0 && j < n) { s += prof0[j]; c++; } return s / c; });   // сглаживание
+  const items = BRIDGES.map(([bx, bz]) => {
+    const p = RIVERS[0].dense; let bi = 0, bd = 1e9;
+    p.forEach(([x, z], i) => { const d = Math.hypot(x - bx, z - bz); if (d < bd) { bd = d; bi = i; } });
+    const a = p[Math.max(0, bi - 2)], c = p[Math.min(p.length - 1, bi + 2)];
+    const tx = c[0] - a[0], tz = c[1] - a[1], tl = Math.hypot(tx, tz);
+    const ux = -tz / tl, uz = tx / tl;                              // ось моста — поперёк реки
+    return { x: bx, z: bz, ux, uz, vx: -uz, vz: ux, rot: Math.atan2(-uz, ux), prof, step, endH: [prof[0], prof[n - 1]] };
+  });
+  BRIDGE = { L, W, k, box, Y0, items };
+}
+
+function addBridges(scene, gltf, colliders) {
+  const { L, W, k, box, Y0, items } = BRIDGE;
+  for (const b of items) {
+    const o = gltf.scene.clone(true);
+    o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+    sharpen(o);
+    const g = new THREE.Group();
+    o.scale.setScalar(k);
+    o.position.set(-(box.min.x + box.max.x) / 2 * k, -box.min.y * k + Y0, -(box.min.z + box.max.z) / 2 * k);
+    g.add(o); g.position.set(b.x, 0, b.z); g.rotation.y = b.rot;
+    scene.add(g);
+    for (const s of [-1, 1]) colliders.addBox(b.x + b.vx * s * (W / 2 - 0.15), b.z + b.vz * s * (W / 2 - 0.15), 6.5, 0.18, b.rot);   // перила над лавой
+  }
 }
 
 /* ------------------------------------------------------------------------------------------ */
@@ -153,6 +231,8 @@ export async function buildFireland(scene, renderer, { quality = 'medium' } = {}
   sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.03;
   scene.add(hemi, sun, sun.target);
 
+  let bridgeGltf = null;
+  try { bridgeGltf = await loadGltf('assets/models/fire/bridge.glb'); prepareBridges(bridgeGltf); } catch (e) { BRIDGE = null; }
   const tex = await loadGroundTextures(renderer, quality === 'high' ? '' : '_1k');
   scene.add(makeGround(tex));
   const lava = makeLava(); scene.add(lava.mesh);
@@ -160,13 +240,16 @@ export async function buildFireland(scene, renderer, { quality = 'medium' } = {}
   scene.add(makePebbles());
   scene.add(await makeScorch());
 
-  // лава непроходима: кружки вдоль русел, кроме перешейков
+  // лава непроходима: кружки вдоль русел; у моста — проход шириной с настил, по бокам перила
   for (const r of RIVERS) {
-    r.dense.forEach(([x, z], i) => {
-      if (BRIDGES.some(([bx, bz]) => Math.hypot(x - bx, z - bz) < 4.2)) return;
-      colliders.addCircle(x, z, r.w * 0.85);
+    const rad = r.w * 0.85;
+    r.dense.forEach(([x, z]) => {
+      if (BRIDGE ? BRIDGE.items.some((b) => { const [u, v] = bridgeLocal(b, x, z); return Math.abs(u) < BRIDGE.L / 2 && Math.abs(v) < BRIDGE.W / 2 + rad - 0.25; })
+        : BRIDGES.some(([bx, bz]) => Math.hypot(x - bx, z - bz) < 4.2)) return;
+      colliders.addCircle(x, z, rad);
     });
   }
+  if (BRIDGE) addBridges(scene, bridgeGltf, colliders);
   await addProps(scene, colliders);
 
   const update = (dt, t, hero) => { lava.update(t); ash.update(dt); if (hero) ash.follow(hero.position.x, hero.position.y, hero.position.z); };
@@ -199,7 +282,7 @@ function makeGround(tex) {
   const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position, n = pos.count;
-  for (let i = 0; i < n; i++) pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
+  for (let i = 0; i < n; i++) pos.setY(i, terrainHeight(pos.getX(i), pos.getZ(i)));
   geo.computeVertexNormals();
   const nor = geo.attributes.normal, splat = new Float32Array(n * 3), extra = new Float32Array(n * 2);
   for (let i = 0; i < n; i++) {

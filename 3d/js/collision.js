@@ -19,7 +19,7 @@ export class Colliders {
   resolve(pos, r, skip = null) {
     for (let pass = 0; pass < 2; pass++) {
       for (const c of this.items) {
-        if (c.tag === skip) continue;
+        if (skip !== null && c.tag === skip) continue;          // без skip учитываются все препятствия (раньше пропускались все без метки)
         if (c.kind === 'circle') pushCircle(pos, r, c);
         else pushBox(pos, r, c);
       }
