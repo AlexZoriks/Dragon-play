@@ -161,6 +161,7 @@ async function setSkin(id) {
   scene.add(hero.object);
   state.hero = hero;
   state.skin = id;
+  state.weapon?.dispose();
   state.weapon = skin.weapon ? await attachWeapon(hero, skin.weapon) : null;
   try { localStorage.setItem('g3d-skin', id); } catch (e) { /* приватный режим */ }
 }
