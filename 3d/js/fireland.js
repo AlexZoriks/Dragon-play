@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { Colliders } from './collision.js';
 import { loadGltf, sharpen } from './assets.js';
+import { createFx } from './fx.js';
 
 const SIZE = 200, HALF = SIZE / 2, SEG = 200;              // сетка рельефа — 1 м
 export const FIRE_START = { x: 0, z: 76, face: 180 };       // сразу за воротами, лицом на север
@@ -19,6 +20,15 @@ const LAVA = [
   { w: 4, pts: [[-106, 14], [-70, 6], [-45, 12], [-20, 2], [5, 10], [25, 4], [45, 14], [70, 6], [106, 12]] },
   { w: 2.6, pts: [[54, -64], [51, -50], [47, -36], [38, -22], [30, -8], [25, 4]], fall: true },   // из-под кромки жерла
 ];
+/* Плоские лавовые озёра: центр, полуширина, длина, поворот (рад). Уровень — чуть ниже окрестной земли. */
+const POOLS = [
+  [-22, 64, 3, 5, 0.4], [22, 62, 2.6, 4, 1.2], [-75, -60, 4, 8, 0.8], [5, -55, 3.5, 6, 2.0],
+  [76, -4, 2, 3, 0.3], [-78, 40, 3, 5, 1.5], [28, -76, 3, 6, 0.2], [-40, -70, 2.5, 4, 2.6], [-70, 70, 2.8, 5, 0.9],
+];
+for (const [x, z, w, len, a] of POOLS) {
+  const dx = Math.cos(a) * len / 2, dz = Math.sin(a) * len / 2, ex = Math.cos(a) * (len / 2 + w + 2), ez = Math.sin(a) * (len / 2 + w + 2);
+  LAVA.push({ w, pts: [[x - dx, z - dz], [x + dx, z + dz]], pool: true, ribbon: [[x - ex, z - ez], [x + ex, z + ez]] });
+}
 const LAVA_Y = -0.3;                                         // уровень главной реки
 const BRIDGES = [[-45, 12], [45, 14]];                       // Западный и Восточный перешейки
 /* Ворота — вход в локацию в южной скальной стене; за ними дорога уходит в ущелье */
@@ -101,6 +111,11 @@ function chaikin(pts, iter = 3) {
   return p;
 }
 const RIVERS = LAVA.map((r) => {
+  if (r.pool) {                                                     // озеро: короткий отрезок, ровная поверхность
+    const [[ax, az], [bx, bz]] = r.pts, y = baseHeight((ax + bx) / 2, (az + bz) / 2) - 0.45;
+    const line = ([p, q]) => { const n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / 2)); return Array.from({ length: n + 1 }, (_, k) => [p[0] + (q[0] - p[0]) * k / n, p[1] + (q[1] - p[1]) * k / n, y]); };
+    return { w: r.w, dense: line(r.pts), ribbon: line(r.ribbon), pool: true };
+  }
   const dense = [], pts = chaikin(r.pts);
   for (let i = 0; i < pts.length - 1; i++) {
     const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
@@ -365,9 +380,16 @@ export async function buildFireland(scene, renderer, { quality = 'medium' } = {}
   const occluders = await addCliffs(scene, colliders);
   await addLandmarks(scene, colliders, occluders);
 
-  const update = (dt, t, hero) => { lava.update(t); ash.update(dt); if (hero) ash.follow(hero.position.x, hero.position.y, hero.position.z); };
+  const fx = createFx(scene);
+  const life = makeLavaLife(scene, fx);
+  const geysers = makeGeysers(scene, fx);
+  const update = (dt, t, hero) => {
+    lava.update(t); ash.update(dt);
+    if (hero) { ash.follow(hero.position.x, hero.position.y, hero.position.z); life.update(dt, hero.position); geysers.update(dt, hero.position); craterSmoke(fx, dt, hero.position); }
+    fx.update(dt);
+  };
   return {
-    colliders, occluders, doors: [], lights: { hemi, sun }, dummies: [], update, heightAt,
+    colliders, occluders, doors: [], lights: { hemi, sun }, dummies: [], update, heightAt, hazard: geysers.hazard,
     size: SIZE, start: FIRE_START, bossSpawn: LAIR, maxSlope: 1.15,
   };
 }
@@ -578,7 +600,7 @@ function makeLava() {
   });
   const group = new THREE.Group();
   for (const r of RIVERS) {
-    const m = new THREE.Mesh(riverRibbon(r), mat);
+    const m = new THREE.Mesh(riverRibbon({ w: r.w, dense: r.ribbon || r.dense }), mat);
     m.userData.noAO = true;
     m.renderOrder = 1;                       // после земли: скрытая под берегом часть не считается
     group.add(m);
@@ -930,4 +952,115 @@ function addRoadsideStones(scene, colliders, gltf, rnd) {
     im.castShadow = true; im.receiveShadow = true;
     scene.add(im);
   });
+}
+
+/* ============================ живая лава ============================
+   Рядом с героем (до 28 м) по лаве всплывают пузыри: растут, лопаются брызгами искр и облачком дыма.
+   Иногда из лавы вырывается язык огня. Всё — частицы из fx.js и 40 пузырей одним вызовом отрисовки. */
+const LAVA_PTS = RIVERS.flatMap((r) => r.dense.map(([x, z, y]) => [x, z, y, r.w]));
+function makeLavaLife(scene, fx) {
+  const N = 40, geo = new THREE.SphereGeometry(1, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(2.4, 0.95, 0.22) });
+  const mesh = new THREE.InstancedMesh(geo, mat, N);
+  mesh.frustumCulled = false; mesh.userData.noAO = true;
+  scene.add(mesh);
+  const B = Array.from({ length: N }, () => ({ on: false })), m = new THREE.Matrix4(), zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  for (let i = 0; i < N; i++) mesh.setMatrixAt(i, zero);
+  let near = [], scan = 0, bubbleAcc = 0, burstT = 1;
+  const pick = () => {
+    const [x, z, y, w] = near[Math.floor(Math.random() * near.length)];
+    for (let k = 0; k < 4; k++) {
+      const a = Math.random() * 6.28, r = Math.random() * w * 0.8, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+      if (lavaInfo(px, pz)[0] < -0.6) return [px, y + 0.02, pz];
+    }
+    return null;
+  };
+  return {
+    update(dt, hp) {
+      if ((scan -= dt) <= 0) { scan = 0.5; near = LAVA_PTS.filter(([x, z]) => Math.abs(x - hp.x) < 28 && Math.abs(z - hp.z) < 28); }
+      if (near.length) {
+        bubbleAcc += dt * 6;
+        while (bubbleAcc >= 1) {
+          bubbleAcc--;
+          const slot = B.find((b) => !b.on), p = pick();
+          if (slot && p) Object.assign(slot, { on: true, x: p[0], y: p[1], z: p[2], r: 0.12 + Math.random() ** 2 * 0.4, t: 0, dur: 0.6 + Math.random() * 0.9 });
+        }
+        if ((burstT -= dt) <= 0) {                                 // выброс огня
+          burstT = 0.8 + Math.random() * 2;
+          const p = pick();
+          if (p) { for (let k = 0; k < 8; k++) fx.flame(p[0], p[1] + 0.2, p[2], { size: 0.9, up: 2.6, spread: 0.5, life: 0.8 }); for (let k = 0; k < 10; k++) fx.ember(p[0], p[1] + 0.3, p[2], { speed: 1.5, up: 5 }); fx.smoke(p[0], p[1] + 1.5, p[2], { size: 2, up: 1.2, life: 3 }); }
+        }
+      }
+      B.forEach((b, i) => {
+        if (!b.on) return;
+        b.t += dt;
+        if (b.t >= b.dur) {                                          // лопнул
+          b.on = false; mesh.setMatrixAt(i, zero);
+          for (let k = 0; k < 5 + b.r * 12; k++) fx.ember(b.x, b.y + b.r * 0.5, b.z, { speed: 1.2 + b.r * 3, up: 2.5 + b.r * 5, life: 0.8 });
+          if (b.r > 0.25) fx.flame(b.x, b.y + 0.1, b.z, { size: 0.5 + b.r, up: 1.5, spread: 0.1, life: 0.4 });
+          if (Math.random() < 0.3) fx.smoke(b.x, b.y + 0.4, b.z, { size: 1, up: 0.8, life: 2.5, spread: 0.1 });
+          return;
+        }
+        const k = Math.sin(Math.min(1, b.t / b.dur) * Math.PI * 0.5), r = b.r * k;
+        m.makeScale(r, r * 0.8, r).setPosition(b.x, b.y, b.z); mesh.setMatrixAt(i, m);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+    },
+  };
+}
+
+/* ============================ гейзеры ============================
+   Поле гейзеров (зона H): жерла из тёмного камня со светящейся сердцевиной.
+   Цикл: покой (струйки пара) → предупреждение 1.6 с (шипит, сердцевина разгорается, искры) →
+   извержение 2.6 с (столб пара и огня ~10 м). Кто стоит над жерлом во время извержения — получает урон. */
+const GEYSERS = [[58, -15], [66, -24], [61, -27], [69, -15], [56, -23], [72, -26]];
+function makeGeysers(scene, fx) {
+  const coneGeo = new THREE.CylinderGeometry(0.55, 1.7, 0.9, 12, 1, true);
+  const rock = new THREE.MeshStandardMaterial({ color: 0x1f1714, roughness: 0.95, flatShading: true, side: THREE.DoubleSide });
+  const vents = GEYSERS.map(([x, z], i) => {
+    const y = heightAt(x, z);
+    const cone = new THREE.Mesh(coneGeo, rock); cone.position.set(x, y + 0.3, z); cone.castShadow = true; cone.receiveShadow = true;
+    const coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.4, 0.06, 0.01) });
+    const core = new THREE.Mesh(new THREE.CircleGeometry(0.55, 14), coreMat); core.rotation.x = -Math.PI / 2; core.position.set(x, y + 0.72, z);
+    core.userData.noAO = true;
+    scene.add(cone, core);
+    return { x, z, y: y + 0.75, coreMat, state: 'idle', t: 0, wait: 2 + i * 1.7, acc: [0, 0, 0] };
+  });
+  const emit = (v, i, rate, dt, fn) => { v.acc[i] += rate * dt; while (v.acc[i] >= 1) { v.acc[i]--; fn(); } };
+  return {
+    update(dt, hp) {
+      for (const v of vents) {
+        v.t += dt;
+        if (v.state === 'idle' && v.t > v.wait) { v.state = 'warn'; v.t = 0; }
+        else if (v.state === 'warn' && v.t > 1.6) { v.state = 'erupt'; v.t = 0; }
+        else if (v.state === 'erupt' && v.t > 2.6) { v.state = 'idle'; v.t = 0; v.wait = 4 + Math.random() * 6; }
+        const k = v.state === 'warn' ? v.t / 1.6 : v.state === 'erupt' ? 1 - v.t / 2.6 * 0.5 : 0;
+        v.coreMat.color.setRGB(0.4 + 2.2 * k, 0.06 + 0.9 * k, 0.01 + 0.2 * k);
+        if (Math.hypot(v.x - hp.x, v.z - hp.z) > 50) continue;      // далеко — частицы не тратим
+        if (v.state === 'idle') emit(v, 0, 2, dt, () => fx.steam(v.x, v.y, v.z, { size: 0.9, up: 1.2, life: 2, spread: 0.2 }));
+        else if (v.state === 'warn') {
+          emit(v, 0, 10, dt, () => fx.steam(v.x, v.y, v.z, { size: 1.1, up: 2.5, life: 1.2, spread: 0.25 }));
+          emit(v, 1, 8, dt, () => fx.ember(v.x, v.y, v.z, { speed: 0.8, up: 3.5, life: 0.8 }));
+        } else {
+          emit(v, 0, 45, dt, () => fx.steam(v.x, v.y, v.z, { size: 1.9, up: 11, life: 1.6, spread: 0.35 }));
+          emit(v, 1, 20, dt, () => fx.flame(v.x, v.y, v.z, { size: 1.1, up: 7, spread: 0.25, life: 0.7 }));
+          emit(v, 2, 15, dt, () => fx.ember(v.x, v.y + 0.5, v.z, { speed: 2, up: 9, life: 1.4 }));
+        }
+      }
+    },
+    /** Урон в секунду в точке (0 — безопасно) */
+    hazard(p) {
+      for (const v of vents) if (v.state === 'erupt' && Math.hypot(p.x - v.x, p.z - v.z) < 1.9) return 25;
+      return 0;
+    },
+  };
+}
+
+/* --- дым из жерла вулкана: тёмные клубы и искры, видно издалека --- */
+let smokeAcc = 0, emberAcc = 0;
+function craterSmoke(fx, dt, hp) {
+  if (Math.hypot(hp.x - V.x, hp.z - V.z) > 130) return;
+  smokeAcc += dt * 3; emberAcc += dt * 5;
+  while (smokeAcc >= 1) { smokeAcc--; const a = Math.random() * 6.28, r = Math.random() * 7; fx.smoke(V.x + Math.cos(a) * r, V.floorY + 0.8, V.z + Math.sin(a) * r, { size: 5, up: 2.6, life: 7, spread: 0.5 }); }
+  while (emberAcc >= 1) { emberAcc--; const a = Math.random() * 6.28, r = Math.random() * 8; fx.ember(V.x + Math.cos(a) * r, V.floorY + 0.5, V.z + Math.sin(a) * r, { speed: 1, up: 6, life: 1.8 }); }
 }

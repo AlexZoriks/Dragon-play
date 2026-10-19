@@ -263,6 +263,10 @@ function frame() {
   // рельеф: герой стоит на земле; у локации свои эффекты (лава, пепел)
   if (world.heightAt) hero.position.y = world.heightAt(hero.position.x, hero.position.z);
   world.update?.(dt, timer.getElapsed(), hero);
+  // опасные места локации (гейзеры): урон раз в 0.5 с, пока стоишь
+  const dps = world.hazard?.(hero.position) || 0;
+  if (dps > 0 && !hero.dead) { state.hazT = (state.hazT ?? 0.5) + dt; if (state.hazT >= 0.5) { state.hazT = 0; hurtHero(Math.round(dps * 0.5)); } }
+  else state.hazT = 0.5;
   updateFocus();
   // тень следует за героем, чтобы карта теней была резкой рядом с ним
   const sun = world.lights.sun;
