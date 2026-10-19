@@ -16,6 +16,7 @@ import { ui } from './ui.js';
 import { PostFx } from './post.js';
 import { Boss, BOSS_DEF } from './boss.js';
 import { combatUi } from './combat-ui.js';
+import { Minimap, captureMap } from './minimap.js';
 
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -33,7 +34,7 @@ const input = new Input({ dpad: document.getElementById('dpad'), canvas });
 const state = { autoQ: true, run: true, quality: 'medium', hero: null, npcs: [], world: null, focus: null, errors: [], fps: 0,
   boss: null, hp: 100, maxHp: 100, hurtT: 99 };
 window.__g3d = state;                       // для автотестов
-state.view = view;
+state.view = view; state.renderer = renderer; state.scene = scene;     // для автотестов и снимка карты
 state.setGrip = (rot, off, order = 'YXZ') => { const g = state.weapon.grip; g.rotation.set(...rot.map((a) => a * Math.PI / 180), order); if (off) g.position.set(...off); };
 addEventListener('error', (e) => state.errors.push(String(e.message)));
 
@@ -139,6 +140,8 @@ async function start() {
   state.world = village ? await buildWorld(scene, renderer)
     : state.loc === 'arena' ? await buildArena(scene, renderer) : await buildFireland(scene, renderer);
   if (!village) Object.assign(HERO, { x: 0, z: 3, face: 180 });
+  // мини-карта: снимок локации сверху — до героя и босса, чтобы их не было на фоне
+  if (state.world.size) state.minimap = new Minimap(document.getElementById('minimap'), captureMap(renderer, scene, state.world.size), state.world.size);
   await setSkin(currentSkin());
   if (state.world.bossSpawn) await spawnBoss(state.world.bossSpawn);
   for (const def of village ? NPCS : []) {
@@ -265,6 +268,7 @@ function frame() {
   sun.target.position.set(hero.position.x, 0, hero.position.z);
   sun.position.set(hero.position.x - 18, 22, hero.position.z + 10);
   view.update(dt, hero.position, world.occluders);
+  state.minimap?.draw(hero, state.boss, view.yaw);
   if (QUALITY[state.quality].post) post.render(); else renderer.render(scene, view.camera);
 }
 

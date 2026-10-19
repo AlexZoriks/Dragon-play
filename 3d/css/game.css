@@ -106,3 +106,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #14110d; col
 .hurt.is-on { animation: hurt .45s ease-out; }
 @keyframes hurt { from { opacity: 1; } to { opacity: 0; } }
 @media (max-width: 430px) { .boss-bar { top: calc(54px + var(--safe-t)); width: 56vw; } .hero-hp { width: 110px; top: calc(56px + var(--safe-t)); } }
+
+/* мини-карта: круг под здоровьем героя; нажатие — большая карта по центру */
+.minimap { position: fixed; left: calc(10px + var(--safe-l)); top: calc(100px + var(--safe-t)); width: 116px; height: 116px; border-radius: 50%;
+  border: 2px solid var(--panel-edge); box-shadow: var(--shadow), inset 0 0 0 1px rgba(255, 212, 122, .25); background: #120a07; cursor: pointer; z-index: 3; }
+.minimap.is-big { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(88vw, 70vh); height: min(88vw, 70vh); border-radius: 16px; border-color: var(--gold); z-index: 8; }
+@media (max-width: 430px) { .minimap { width: 92px; height: 92px; top: calc(84px + var(--safe-t)); } }

@@ -38,7 +38,7 @@ export async function buildArena(scene, renderer) {
     dummies.push(d);
   }
   // босс стоит в глубине полигона лицом к герою
-  return { colliders, occluders: [], doors: [], lights: { hemi, sun }, dummies, bossSpawn: { x: 0, z: -12, face: 0 } };
+  return { colliders, occluders: [], doors: [], lights: { hemi, sun }, dummies, size: SIZE, bossSpawn: { x: 0, z: -12, face: 0 } };
 }
 
 /* Пол: тёмный камень с сеткой по 1 м и кругом в центре — по сетке видно скорость и размер */
