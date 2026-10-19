@@ -5,6 +5,7 @@ import { HERO, SKINS, DEFAULT_SKIN, NPCS, MOVE, DIALOGS, PROPS, CHAR_MODE_DEFAUL
 import { onProgress, preload, charUrl, envUrl, characterModel, setMaxAnisotropy } from './assets.js';
 import { buildWorld } from './world.js';
 import { buildArena } from './arena.js';
+import { buildFireland } from './fireland.js';
 import { Character } from './character.js';
 import { Npc, SpriteNpc } from './npc.js';
 import { SpriteCharacter, loadSprite } from './sprite.js';
@@ -109,13 +110,21 @@ input.onAttack = () => document.getElementById('btn-attack').click();
 async function start() {
   onProgress(ui.progress);
   // локация: полигон для тестов (по умолчанию) или старая деревня (?loc=village)
-  state.loc = new URLSearchParams(location.search).get('loc') === 'village' ? 'village' : 'arena';
+  // локация: ?loc=fire (по умолчанию) | arena (полигон для тестов) | village (старая деревня)
+  const LOCS = {
+    fire: ['Огненные земли', 'новый 3D-мир · проба'],
+    arena: ['Полигон', 'проверка героя, оружия и анимаций'],
+    village: ['Изумрудные луга', 'деревенская площадь · тест 3D'],
+  };
+  const want = new URLSearchParams(location.search).get('loc');
+  state.loc = LOCS[want] ? want : 'fire';
   const village = state.loc === 'village';
-  document.querySelector('.hud__place b').textContent = village ? 'Изумрудные луга' : 'Полигон';
-  document.querySelector('.hud__place span').textContent = village ? 'деревенская площадь · тест 3D' : 'проверка героя, оружия и анимаций';
+  document.querySelector('.hud__place b').textContent = LOCS[state.loc][0];
+  document.querySelector('.hud__place span').textContent = LOCS[state.loc][1];
   await preload([...(SKINS[currentSkin()].model ? [charUrl(SKINS[currentSkin()].model)] : []),
     ...(village ? [...NPCS.map((n) => charUrl(n.model)), ...PROPS.map((p) => envUrl(p.model, p.pack)), envUrl('fence_wood_straight')] : [])]);
-  state.world = village ? await buildWorld(scene, renderer) : await buildArena(scene, renderer);
+  state.world = village ? await buildWorld(scene, renderer)
+    : state.loc === 'arena' ? await buildArena(scene, renderer) : await buildFireland(scene, renderer);
   if (!village) Object.assign(HERO, { x: 0, z: 3, face: 180 });
   await setSkin(currentSkin());
   for (const def of village ? NPCS : []) {
@@ -188,6 +197,9 @@ function frame() {
   hero.update(dt);
   updateWeapon(state.weapon, dt);
   for (const d of world.dummies || []) d.update(dt);
+  // рельеф: герой стоит на земле; у локации свои эффекты (лава, пепел)
+  if (world.heightAt) hero.position.y = world.heightAt(hero.position.x, hero.position.z);
+  world.update?.(dt, timer.getElapsed(), hero);
   updateFocus();
   // тень следует за героем, чтобы карта теней была резкой рядом с ним
   const sun = world.lights.sun;

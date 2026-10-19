@@ -32,7 +32,7 @@ export class FollowCamera {
     const k = 1 - Math.exp(-CAMERA.follow * dt);
     this.yaw += (this.yawTarget - this.yaw) * Math.min(1, 10 * dt);
     this.distance += (this.distanceTarget - this.distance) * Math.min(1, 8 * dt);
-    this.focus.lerp(new THREE.Vector3(target.x, 1.1, target.z), k);
+    this.focus.lerp(new THREE.Vector3(target.x, (target.y || 0) + 1.1, target.z), k);
     // в вертикальном экране телефона видно меньше по ширине — камера отходит дальше
     const fit = this.camera.aspect < 1 ? Math.pow(1 / this.camera.aspect, 0.55) : 1;
     const dist = this.distance * fit, p = CAMERA.pitch * DEG, h = Math.sin(p) * dist, r = Math.cos(p) * dist;
@@ -45,7 +45,7 @@ export class FollowCamera {
     // устойчивая проверка: луч от камеры к голове и к ногам героя против габаритов здания
     const from = this.camera.position, hit = new Set(), p = new THREE.Vector3();
     for (const y of [0.3, 1.6]) {
-      const to = new THREE.Vector3(target.x, y, target.z), len = to.distanceTo(from);
+      const to = new THREE.Vector3(target.x, (target.y || 0) + y, target.z), len = to.distanceTo(from);
       this.ray.set(from, to.sub(from).normalize());
       for (const o of occluders) {
         o.userData.box ??= new THREE.Box3().setFromObject(o).expandByScalar(-0.3);

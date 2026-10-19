@@ -57,7 +57,7 @@ export class PostFx {
       aoRender(...args);
       for (const o of hidden) o.visible = true;
     };
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.35, 0.5, 0.88);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.3, 0.4, 0.92);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());            // тонмаппинг и sRGB
     this.grade = new ShaderPass(GradeShader);
