@@ -12,7 +12,7 @@ import { Colliders } from './collision.js';
 import { loadGltf, sharpen } from './assets.js';
 
 const SIZE = 200, HALF = SIZE / 2, SEG = 200;              // сетка рельефа — 1 м
-export const FIRE_START = { x: 0, z: 72, face: 180 };       // Пепельная поляна, лицом на север
+export const FIRE_START = { x: 0, z: 76, face: 180 };       // сразу за воротами, лицом на север
 
 /* Лавовые реки: ломаные (x, z) от истока к устью, полуширина w. Лавопад стекает с вулкана. */
 const LAVA = [
@@ -21,13 +21,8 @@ const LAVA = [
 ];
 const LAVA_Y = -0.3;                                         // уровень главной реки
 const BRIDGES = [[-45, 12], [45, 14]];                       // Западный и Восточный перешейки
-/* Тропы по плану (усыпаны гравием) */
-const PATHS = [
-  [[0, 98], [0, 72], [-30, 60], [-58, 48], [-50, 30], [-45, 12], [-52, -8], [-62, -30]],
-  [[-62, -30], [-40, -38], [-12, -32]],
-  [[0, 72], [30, 68], [55, 64]],
-  [[55, 64], [50, 40], [45, 14], [52, -4], [62, -20], [64, -34]],
-];
+/* Ворота — вход в локацию в южной скальной стене; за ними дорога уходит в ущелье */
+const GATE = { x: 0, z: 85, h: 14 };
 /* Вулкан: плоское дно жерла (арена босса), кромка кратера, склоны; подъём — расщелина по тропе лавопадов */
 const V = { x: 68, z: -72, floorR: 11, floorY: 14, rimR: 15, rimY: 21, fall: 12 };
 const RAMP = [[64, -34, 3], [66, -48, 7.5], [68, -61, 14]];      // точки подъёма: x, z, высота тропы
@@ -38,8 +33,10 @@ const FIRE_PROPS = [
   { model: 'rock_big', count: 18, scale: [0.9, 1.9], col: 1.6, base: 3.2 },
   { model: 'rock_mid', count: 34, scale: [0.6, 1.3], col: 0.75, base: 2.0 },          // средние скалы — чтобы большие не повторялись
 ];
-/* Центры зон — там не ставим случайные скалы (место под постройки и бой) */
-const ZONES = [[0, 72, 14], [55, 64, 15], [-58, 48, 12], [-62, -30, 16], [-12, -32, 16], [62, -20, 12], [68, -72, 26]];
+/* Центры зон — там не ставим случайные скалы (место под постройки и бой): старт, лагерь, руины, кладбище, гейзеры, жерло */
+const ZONES = [[0, 76, 10], [62, 46, 12], [-62, -34, 14], [-16, -34, 15], [62, -20, 10], [68, -72, 26]];
+/* Обгоревшая роща: центр и радиус */
+const GROVE = { x: -50, z: 48, r: 20 };
 
 function hash(x, z) { const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, z) {
@@ -81,7 +78,8 @@ function rampH(x, z) {                          // расщелина-подъё
 function baseHeight(x, z) {
   let h = fbm(x * 0.03 + 3, z * 0.03 + 7) * 3 - 1.2 + fbm(x * 0.15, z * 0.15) * 0.25;   // мелкий рельеф дают карты нормалей
   const e = Math.max(Math.abs(x), Math.abs(z)) / HALF;
-  h += Math.max(0, e - 0.84) ** 2 * 900 * (0.6 + 0.7 * fbm(x * 0.05, z * 0.05));      // горы по краю карты
+  const pass = 1 - (1 - smoothstep(Math.abs(x - GATE.x), 3.5, 10)) * smoothstep(z, 78, 86);   // ущелье за воротами
+  h += Math.max(0, e - 0.84) ** 2 * 900 * (0.6 + 0.7 * fbm(x * 0.05, z * 0.05)) * pass;      // горы по краю карты
   h = Math.max(h, volcanoH(x, z));
   const [ry, rw] = rampH(x, z);
   if (rw > 0) h = lerp(h, ry, rw);
@@ -173,13 +171,115 @@ function rampAt(x, z, ground) {
   return best;
 }
 /** Земля для сетки рельефа: с подъездами к мостам, без настила */
-function terrainHeight(x, z) { const g = groundHeight(x, z); return Math.max(g, rampAt(x, z, g)); }
+function terrainHeight(x, z) {
+  let g = groundHeight(x, z);
+  for (const p of PLAZAS) {                                         // под площадкой-развилкой земля ровная
+    const d = Math.hypot(x - p.x, z - p.z);
+    if (d < 12) g = lerp(p.y, g, smoothstep(d, 7.8, 12));
+  }
+  return Math.max(g, rampAt(x, z, g));
+}
 /** Высота, на которой стоит персонаж: земля, подъезд или настил моста */
 export function heightAt(x, z) { return Math.max(terrainHeight(x, z), deckAt(x, z)); }
 
+
+/* ============================ дорожная сеть ============================
+   Узлы: ворота, площадки-развилки (3D-модель Meshy), концы мостов, цели (лагерь, руины, кладбище, жерло).
+   Дорога — гладкий сплайн Эрмита между узлами: из выхода площадки и с моста она выходит по их оси,
+   поэтому стыки ровные. У цели дорога сужается и растворяется в площадке зоны, а не обрывается. */
+const BRIDGE_L = 16;
+const BRIDGE_AXES = BRIDGES.map(([bx, bz]) => {                    // ось моста — поперёк сглаженного русла
+  const p = RIVERS[0].dense; let bi = 0, bd = 1e9;
+  p.forEach(([x, z], i) => { const d = Math.hypot(x - bx, z - bz); if (d < bd) { bd = d; bi = i; } });
+  const a = p[Math.max(0, bi - 2)], c = p[Math.min(p.length - 1, bi + 2)];
+  const tl = Math.hypot(c[0] - a[0], c[1] - a[1]);
+  return { x: p[bi][0], z: p[bi][1], ux: -(c[1] - a[1]) / tl, uz: (c[0] - a[0]) / tl };
+});
+/** Конец моста: точка у края настила и направление прочь от моста */
+function bridgeEnd(i, north) {
+  const b = BRIDGE_AXES[i], s = (b.uz < 0) === north ? 1 : -1;
+  return { p: [b.x + b.ux * s * BRIDGE_L / 2, b.z + b.uz * s * BRIDGE_L / 2], d: [b.ux * s, b.uz * s] };
+}
+
+/* Площадка-развилка (plaza_fork.glb): три выхода; углы выходов сняты с самой модели (градусы, 0 — вдоль +z) */
+const PLAZA_EXITS = [67, 218, 320].map((a) => a * Math.PI / 180);
+const PLAZA_K = 8, PLAZA_REXIT = 6.6, PLAZA_TOP = -0.033;        // масштаб (ширина выхода ≈ 3.2 м), радиус выхода, уровень плит в модели
+const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+/** Поворот площадки так, чтобы три выхода смотрели на три цели (перебор углов и порядка выходов) */
+function makePlaza(x, z, targets) {
+  const want = targets.map(([tx, tz]) => Math.atan2(tx - x, tz - z));
+  const perms = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+  let best = { err: 1e9 };
+  for (let deg = 0; deg < 360; deg++) {
+    const r = deg * Math.PI / 180;
+    for (const p of perms) {
+      let e = 0; for (let i = 0; i < 3; i++) e += angDiff(PLAZA_EXITS[p[i]] + r, want[i]) ** 2;
+      if (e < best.err) best = { err: e, rot: r, perm: p };
+    }
+  }
+  const exits = best.perm.map((ei) => {
+    const a = PLAZA_EXITS[ei] + best.rot, d = [Math.sin(a), Math.cos(a)];
+    return { p: [x + d[0] * PLAZA_REXIT, z + d[1] * PLAZA_REXIT], d };
+  });
+  return { x, z, rot: best.rot, exits, y: groundHeight(x, z) };
+}
+const WB_S = bridgeEnd(0, false), WB_N = bridgeEnd(0, true), EB_S = bridgeEnd(1, false), EB_N = bridgeEnd(1, true);
+const CAMP = [62, 46], RUINS = [-62, -34], GRAVE = [-16, -34], CRATER = [68, -61];
+const F1 = makePlaza(0, 50, [[0, 70], [-30, 44], [38, 34]]);            // юг (ворота) · запад (роща) · восток
+const F3 = makePlaza(38, 32, [[0, 50], CAMP, EB_S.p]);                  // к F1 · лагерь · Восточный мост
+const F2 = makePlaza(-48, -14, [WB_N.p, RUINS, GRAVE]);                 // Западный мост · руины · кладбище
+const PLAZAS = [F1, F2, F3];
+
+/* Дороги: узлы { p, d } — с направлением (выход площадки, конец моста), { p } — промежуточные, taper — сужение к цели */
+const ROAD_DEFS = [
+  [{ p: [0, 99] }, { p: [0, 86] }, { p: [0, 70] }, F1.exits[0]],                       // ворота → поляна → развилка
+  [F1.exits[1], { p: [-28, 46] }, { p: [-42, 32] }, WB_S],                              // через рощу к Западному мосту
+  [WB_N, F2.exits[0]],
+  [F2.exits[1], { p: RUINS, taper: true }],
+  [F2.exits[2], { p: GRAVE, taper: true }],
+  [F1.exits[2], F3.exits[0]],
+  [F3.exits[1], { p: CAMP, taper: true }],
+  [F3.exits[2], EB_S],
+  [EB_N, { p: [55, -6] }, { p: [62, -20] }, { p: [64, -34] }, { p: [66, -48] }, { p: CRATER, taper: true }],   // гейзеры → подъём → жерло
+];
+/** Сплайн Эрмита через узлы, точки через ~0.8 м: [x, z, ширина 0..1] */
+function buildRoad(nodes) {
+  const P = nodes.map((n) => n.p), out = [];
+  const tan = (i) => {
+    const n = nodes[i], len = Math.hypot(...[0, 1].map((k) => (P[Math.min(i + 1, P.length - 1)][k] - P[Math.max(i - 1, 0)][k]))) / (i === 0 || i === P.length - 1 ? 1 : 2);
+    if (n.d) { const sgn = i === 0 ? 1 : -1; return [n.d[0] * sgn * len, n.d[1] * sgn * len]; }   // в узел входим против его направления
+    const a = P[Math.max(i - 1, 0)], b = P[Math.min(i + 1, P.length - 1)];
+    return [(b[0] - a[0]) / (i === 0 || i === P.length - 1 ? 1 : 2), (b[1] - a[1]) / (i === 0 || i === P.length - 1 ? 1 : 2)];
+  };
+  for (let i = 0; i < P.length - 1; i++) {
+    const [ax, az] = P[i], [bx, bz] = P[i + 1], ta = tan(i), tb = tan(i + 1);
+    const n = Math.max(2, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.8));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+      out.push([h00 * ax + h10 * ta[0] + h01 * bx + h11 * tb[0], h00 * az + h10 * ta[1] + h01 * bz + h11 * tb[1], 1]);
+    }
+  }
+  out.push([...P[P.length - 1], 1]);
+  if (nodes[nodes.length - 1].taper) {                              // последние 7 м сужаются
+    let acc = 0;
+    for (let i = out.length - 1; i > 0 && acc < 7; i--) { out[i][2] = lerp(0.3, 1, acc / 7); acc += Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]); }
+  }
+  return out;
+}
+const ROADS = ROAD_DEFS.map(buildRoad);
+const ROAD_COARSE = ROADS.map((r) => r.filter((_, i) => i % 4 === 0 || i === r.length - 1));
+/** Расстояние до ближайшей дороги или площадки (м) */
+function roadDist(x, z) {
+  let d = 1e9;
+  for (const r of ROAD_COARSE) d = Math.min(d, distToPolyline(x, z, r));
+  for (const p of PLAZAS) d = Math.min(d, Math.hypot(x - p.x, z - p.z) - 5.5);
+  return d;
+}
+
 /** Ставит мосты поперёк главной реки и снимает профиль настила. Вызывается до постройки рельефа. */
 function prepareBridges(gltf) {
-  const L = 16, root = gltf.scene, box = new THREE.Box3().setFromObject(root);
+  const L = BRIDGE_L, root = gltf.scene, box = new THREE.Box3().setFromObject(root);
   const k = L / (box.max.x - box.min.x), W = (box.max.z - box.min.z) * k;
   const verts = [];
   root.updateMatrixWorld(true);
@@ -197,15 +297,8 @@ function prepareBridges(gltf) {
   }
   for (let i = 0; i < n; i++) if (!isFinite(prof0[i])) prof0[i] = isFinite(prof0[i - 1]) ? prof0[i - 1] : Y0;
   const prof = prof0.map((_, i) => { let s = 0, c = 0; for (let j = i - 2; j <= i + 2; j++) if (j >= 0 && j < n) { s += prof0[j]; c++; } return s / c; });   // сглаживание
-  const items = BRIDGES.map(([bx, bz]) => {
-    const p = RIVERS[0].dense; let bi = 0, bd = 1e9;
-    p.forEach(([x, z], i) => { const d = Math.hypot(x - bx, z - bz); if (d < bd) { bd = d; bi = i; } });
-    const a = p[Math.max(0, bi - 2)], c = p[Math.min(p.length - 1, bi + 2)];
-    const tx = c[0] - a[0], tz = c[1] - a[1], tl = Math.hypot(tx, tz);
-    const ux = -tz / tl, uz = tx / tl;                              // ось моста — поперёк реки
-    return { x: p[bi][0], z: p[bi][1], ux, uz, vx: -uz, vz: ux,   // центр — на оси (сглаженного) русла
-             rot: Math.atan2(-uz, ux), prof, step, endH: [prof[0], prof[n - 1]] };
-  });
+  const items = BRIDGE_AXES.map(({ x, z, ux, uz }) => ({ x, z, ux, uz, vx: -uz, vz: ux,
+    rot: Math.atan2(-uz, ux), prof, step, endH: [prof[0], prof[n - 1]] }));
   BRIDGE = { L, W, k, box, Y0, items };
 }
 
@@ -270,6 +363,7 @@ export async function buildFireland(scene, renderer, { quality = 'medium' } = {}
   scene.add(await makeRoads(renderer));
   await addProps(scene, colliders);
   const occluders = await addCliffs(scene, colliders);
+  await addLandmarks(scene, colliders, occluders);
 
   const update = (dt, t, hero) => { lava.update(t); ash.update(dt); if (hero) ash.follow(hero.position.x, hero.position.y, hero.position.z); };
   return {
@@ -308,7 +402,7 @@ function makeGround(tex) {
     const x = pos.getX(i), z = pos.getZ(i), ny = nor.getY(i), [ld] = lavaInfo(x, z);
     const vr = Math.hypot(x - V.x, z - V.z), edge = Math.max(Math.abs(x), Math.abs(z)) / HALF;
     const brk = fbm(x * 0.35 + 5, z * 0.35 - 2);                                  // рваный край пятен
-    const path = Math.min(...PATHS.map((p) => distToPolyline(x, z, p)));
+    const path = roadDist(x, z);
     let gravel = (1 - smoothstep(path, 1.0, 2.6 + brk * 1.2)) + smoothstep(fbm(x * 0.06, z * 0.06 + 9), 0.66, 0.74) * 0.8;
     let rock = (1 - smoothstep(ny, 0.7, 0.86)) + smoothstep(edge, 0.86, 0.93);                     // склоны и горы по краю
     rock += (1 - smoothstep(vr, V.rimR + 4, V.rimR + 14)) * 0.7 + smoothstep(fbm(x * 0.05 - 3, z * 0.05), 0.7, 0.78) * 0.6;
@@ -385,7 +479,7 @@ function makePebbles() {
   for (let tries = 0; k < N && tries < N * 6; tries++) {
     const x = (rnd() - 0.5) * (SIZE - 12), z = (rnd() - 0.5) * (SIZE - 12);
     const [ld] = lavaInfo(x, z);
-    if (ld < 0.8 || Math.hypot(x - V.x, z - V.z) < V.rimR + 3) continue;
+    if (ld < 0.8 || Math.hypot(x - V.x, z - V.z) < V.rimR + 3 || roadDist(x, z) < 2.4) continue;
     if (fbm(x * 0.08, z * 0.08) < 0.42 && rnd() < 0.7) continue;          // кучками, а не ровным слоем
     const sz = 0.08 + rnd() ** 3 * 0.6;
     e.set(rnd() * 6, rnd() * 6, rnd() * 6); q.setFromEuler(e); s.set(sz, sz, sz);
@@ -411,7 +505,7 @@ async function makeScorch() {
   const S = 4;                                                         // каждое пятно — сетка 4×4, ложится по рельефу
   for (let n = 0; n < 70; n++) {
     const x = (rnd() - 0.5) * (SIZE - 20), z = (rnd() - 0.5) * (SIZE - 20), [ld] = lavaInfo(x, z);
-    if (ld < 1 || Math.hypot(x - V.x, z - V.z) < V.rimR + 6) continue;
+    if (ld < 1 || Math.hypot(x - V.x, z - V.z) < V.rimR + 6 || roadDist(x, z) < 3) continue;
     const size = 2.5 + rnd() * 4, rot = rnd() * 6.28, cs = Math.cos(rot), sn = Math.sin(rot), tile = Math.floor(rnd() * 3);
     const b = positions.length / 3;
     for (let j = 0; j <= S; j++) for (let i = 0; i <= S; i++) {
@@ -577,7 +671,8 @@ async function addProps(scene, colliders) {
     for (let tries = 0; placed < p.count && tries < p.count * 40; tries++) {
       const x = (rnd() - 0.5) * (SIZE - 16), z = (rnd() - 0.5) * (SIZE - 16);
       if (lavaInfo(x, z)[0] < 5) continue;
-      if (Math.min(...PATHS.map((q) => distToPolyline(x, z, q))) < 5) continue;
+      if (roadDist(x, z) < 5) continue;
+      if (Math.hypot(x - GROVE.x, z - GROVE.z) < GROVE.r) continue;                // в роще — деревья
       if (ZONES.some(([zx, zz, r]) => Math.hypot(x - zx, z - zz) < r)) continue;
       const s = lerp(p.scale[0], p.scale[1], rnd());
       const o = gltf.scene.clone(true);
@@ -611,7 +706,11 @@ async function addCliffs(scene, colliders) {
     { at: (t) => [-D, t], rot: Math.PI / 2 },  // запад
   ];
   for (const e of edges) {
-    for (let t = -D; t <= D + 0.1; t += STEP) {
+    // на юге сегменты расходятся от ворот: первый — сразу за колонной, без щели
+    const ts = [];
+    if (e.rot === Math.PI) for (let t = 13.5; t <= D + 0.1; t += STEP) ts.push(t, -t);
+    else for (let t = -D; t <= D + 0.1; t += STEP) ts.push(t);
+    for (const t of ts) {
       const [x, z] = e.at(t);
       if (Math.hypot(x - V.x, z - V.z) < 34) continue;                  // склон вулкана
       if (lavaInfo(x, z)[0] < 6) continue;                              // лава уходит за край
@@ -631,7 +730,7 @@ async function addCliffs(scene, colliders) {
   return occluders;
 }
 
-/* --- мощёные дороги по тропам плана: лента из каменных плит (Volcanic Rock Tiles, Poly Haven), повторяет рельеф,
+/* --- мощёные дороги по дорожной сети (ROADS): лента из каменных плит (Volcanic Rock Tiles, Poly Haven), повторяет рельеф,
    поднимается по насыпям на мосты. Края неровные, вдоль них — бордюр из камней (один вызов отрисовки). --- */
 async function makeRoads(renderer) {
   const L = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
@@ -643,23 +742,17 @@ async function makeRoads(renderer) {
   col.colorSpace = THREE.SRGBColorSpace;
   const pos = [], uv = [], idx = [], stones = [];
   const HALF_W = 1.6, ACROSS = 4, TILE = 2.4;
-  for (const path of PATHS) {
-    const pts = chaikin(path, 2), dense = [];
-    for (let i = 0; i < pts.length - 1; i++) {                      // точки через 0.8 м
-      const [ax, az] = pts[i], [bx, bz] = pts[i + 1], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 0.8));
-      for (let k = 0; k < n; k++) dense.push([ax + (bx - ax) * k / n, az + (bz - az) * k / n]);
-    }
-    dense.push(pts[pts.length - 1]);
+  for (const dense of ROADS) {
     let run = null, s = 0;
     const flush = () => { run = null; };
     for (let i = 0; i < dense.length; i++) {
       const [x, z] = dense[i];
-      const onDeck = isFinite(deckAt(x, z)), wet = lavaInfo(x, z)[0] < 0.6, far = Math.abs(x) > 84 || Math.abs(z) > 84;
+      const onDeck = isFinite(deckAt(x, z)), wet = lavaInfo(x, z)[0] < 0.6, far = Math.abs(x) > 97 || Math.abs(z) > 99;
       if (onDeck || wet || far) { flush(); continue; }               // по мосту и через лаву дорога не идёт
       const a0 = dense[Math.max(0, i - 2)], a1 = dense[Math.min(dense.length - 1, i + 2)];
       const tl = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]) || 1, tx = (a1[0] - a0[0]) / tl, tz = (a1[1] - a0[1]) / tl;
       if (i > 0) s += Math.hypot(x - dense[i - 1][0], z - dense[i - 1][1]);
-      const wob = 1 + (fbm(x * 0.4, z * 0.4) - 0.5) * 0.35;           // неровная ширина
+      const wob = (1 + (fbm(x * 0.4, z * 0.4) - 0.5) * 0.35) * dense[i][2];   // неровная ширина; у цели — сужение
       const row = pos.length / 3;
       for (let j = 0; j <= ACROSS; j++) {
         const a = (j / ACROSS - 0.5) * 2 * HALF_W * wob, px = x - tz * a, pz = z + tx * a;
@@ -668,7 +761,7 @@ async function makeRoads(renderer) {
       }
       if (run !== null) for (let j = 0; j < ACROSS; j++) { const k = run + j, n = row + j; idx.push(k, n, k + 1, k + 1, n, n + 1); }
       run = row;
-      if (i % 1 === 0) for (const side of [-1, 1]) {                  // бордюр из камней
+      if (dense[i][2] > 0.65) for (const side of [-1, 1]) {           // бордюр из камней (у сужения — нет)
         const a = side * (HALF_W * wob + 0.15) + (hash(x, z) - 0.5) * 0.2, px = x - tz * a, pz = z + tx * a;
         stones.push([px, heightAt(px, pz), pz, 0.22 + hash(z * 3.1, x) * 0.25]);
       }
@@ -696,4 +789,145 @@ async function makeRoads(renderer) {
   curb.castShadow = true; curb.receiveShadow = true;
   group.add(curb);
   return group;
+}
+
+/* ====================== ориентиры и детали вокруг дорог ======================
+   ворота на входе · площадки-развилки с указателями · обгоревшая роща · камни вдоль обочин.
+   Правило расстановки: ничего крупного ближе 4 м к дороге; камни — на обочине; деревья — в роще. */
+async function addLandmarks(scene, colliders, occluders) {
+  const load = async (name) => { try { return await loadGltf(`assets/models/fire/${name}.glb`); } catch (e) { return null; } };
+  const [gate, plaza, sign, tree, stones] = await Promise.all(['gate', 'plaza_fork', 'signpost', 'tree_burned', 'stones'].map(load));
+  let seed = 41; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const place = (gltf, x, y, z, height, rot, { occlude = false, sink = 0 } = {}) => {
+    const box = new THREE.Box3().setFromObject(gltf.scene), k = height / (box.max.y - box.min.y);
+    const o = gltf.scene.clone(true);
+    o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; if (occlude) m.material = m.material.clone(); } });
+    sharpen(o);
+    o.scale.setScalar(k);
+    o.position.set(-(box.min.x + box.max.x) / 2 * k, -box.min.y * k - sink, -(box.min.z + box.max.z) / 2 * k);
+    const g = new THREE.Group(); g.add(o); g.position.set(x, y, z); g.rotation.y = rot;
+    scene.add(g);
+    if (occlude) occluders.push(g);
+    return { g, k, box };
+  };
+
+  // ворота: проход между колоннами ≈ 3.2 м (замер модели: 0.44 ед. при высоте 1.9)
+  if (gate) {
+    const { k } = place(gate, GATE.x, groundHeight(GATE.x, GATE.z), GATE.z, GATE.h, 0, { occlude: true, sink: 0.4 });
+    for (const s of [-1, 1]) colliders.addBox(GATE.x + s * 0.565 * k, GATE.z, 0.33 * k, 0.3 * k, 0);
+  }
+  // площадки: плиты на уровне выровненной земли + 0.1 м; указатель в центре развилки
+  for (const p of PLAZAS) {
+    if (plaza) {
+      const o = plaza.scene.clone(true);
+      o.traverse((m) => { if (m.isMesh) m.receiveShadow = true; });
+      sharpen(o);
+      o.scale.setScalar(PLAZA_K); o.position.set(p.x, p.y + 0.1 - PLAZA_TOP * PLAZA_K, p.z); o.rotation.y = p.rot;
+      scene.add(o);
+    }
+    if (sign) {
+      place(sign, p.x, p.y + 0.05, p.z, 2.8, p.rot + 0.4);
+      colliders.addCircle(p.x, p.z, 0.55);
+    }
+  }
+  // обгоревшая роща: 14 деревьев вокруг дороги + несколько одиночных у руин и кладбища
+  if (tree) {
+    const spots = [];
+    for (let tries = 0; spots.length < 14 && tries < 600; tries++) {
+      const a = rnd() * Math.PI * 2, r = Math.sqrt(rnd()) * GROVE.r, x = GROVE.x + Math.cos(a) * r, z = GROVE.z + Math.sin(a) * r;
+      if (roadDist(x, z) < 4.5 || lavaInfo(x, z)[0] < 5 || spots.some(([sx, sz]) => Math.hypot(x - sx, z - sz) < 6)) continue;
+      spots.push([x, z]);
+    }
+    for (const [cx, cz, n] of [[RUINS[0], RUINS[1], 3], [GRAVE[0], GRAVE[1], 2], [-24, 66, 2]]) {
+      for (let i = 0, tries = 0; i < n && tries < 200; tries++) {
+        const a = rnd() * 6.28, r = 9 + rnd() * 8, x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+        if (roadDist(x, z) < 4.5 || lavaInfo(x, z)[0] < 5) continue;
+        spots.push([x, z]); i++;
+      }
+    }
+    for (const [x, z] of spots) {
+      const s = 0.8 + rnd() * 0.45;
+      place(tree, x, groundHeight(x, z), z, 7.5 * s, rnd() * 6.28, { sink: 0.3 });
+      colliders.addCircle(x, z, 0.95 * s);
+    }
+  }
+  // камни на обочинах: набор из 4 камней разделён на отдельные камни, каждый вид — один вызов отрисовки
+  if (stones) addRoadsideStones(scene, colliders, stones, rnd);
+}
+
+/** Делит меш на отдельные куски (связные части); каждый — своя геометрия с основанием в 0 */
+function splitComponents(geo) {
+  const pos = geo.attributes.position, idx = geo.index.array, n = pos.count;
+  const keys = new Map(), weld = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const k = `${Math.round(pos.getX(i) * 1e4)},${Math.round(pos.getY(i) * 1e4)},${Math.round(pos.getZ(i) * 1e4)}`;
+    if (!keys.has(k)) keys.set(k, i);
+    weld[i] = keys.get(k);
+  }
+  const par = new Int32Array(n).map((_, i) => i);
+  const find = (a) => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  for (let t = 0; t < idx.length; t += 3) { const a = find(weld[idx[t]]); par[find(weld[idx[t + 1]])] = a; par[find(weld[idx[t + 2]])] = a; }
+  const groups = new Map();
+  for (let t = 0; t < idx.length; t += 3) { const r = find(weld[idx[t]]); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(idx[t], idx[t + 1], idx[t + 2]); }
+  const parts = [];
+  for (const tri of groups.values()) {
+    if (tri.length < 90) continue;                                   // мелкие осколки пропускаем
+    const map = new Map(), newIdx = [];
+    for (const v of tri) { if (!map.has(v)) map.set(v, map.size); newIdx.push(map.get(v)); }
+    const g = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(geo.attributes)) {
+      const size = attr.itemSize, arr = new Float32Array(map.size * size), get = ['getX', 'getY', 'getZ', 'getW'];
+      for (const [oldI, newI] of map) for (let c = 0; c < size; c++) arr[newI * size + c] = attr[get[c]](oldI);
+      g.setAttribute(name, new THREE.BufferAttribute(arr, size));
+    }
+    g.setIndex(newIdx);
+    g.computeBoundingBox();
+    const b = g.boundingBox;
+    g.translate(-(b.min.x + b.max.x) / 2, -b.min.y, -(b.min.z + b.max.z) / 2);
+    g.computeBoundingBox();
+    const bb = g.boundingBox;
+    parts.push({ geo: g, h: bb.max.y, r: Math.max(bb.max.x, bb.max.z) });
+  }
+  return parts;
+}
+
+function addRoadsideStones(scene, colliders, gltf, rnd) {
+  let mesh = null;
+  gltf.scene.traverse((o) => { if (!mesh && o.isMesh) mesh = o; });
+  if (!mesh) return;
+  const parts = splitComponents(mesh.geometry);
+  if (!parts.length) return;
+  const K = 1.1 / Math.max(...parts.map((p) => p.h));                // самый крупный камень ≈ 1.1 м
+  const spots = parts.map(() => []);
+  const tryPut = (x, z) => {
+    if (lavaInfo(x, z)[0] < 1.5 || roadDist(x, z) < 2.2 || isFinite(deckAt(x, z))) return;
+    const i = Math.floor(rnd() * parts.length), s = K * (0.7 + rnd() * 0.7);
+    spots[i].push([x, z, s, rnd() * 6.28]);
+    if (parts[i].r * s > 0.45) colliders.addCircle(x, z, parts[i].r * s * 0.8);
+  };
+  for (const road of ROADS) {                                        // обочина: через 6–10 м, то слева, то справа
+    for (let i = 4; i < road.length - 4; i += 8 + Math.floor(rnd() * 5)) {
+      if (rnd() < 0.4) continue;
+      const [x, z] = road[i], a = road[i - 2], b = road[i + 2];
+      const tl = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nx = -(b[1] - a[1]) / tl, nz = (b[0] - a[0]) / tl;
+      const side = rnd() < 0.5 ? -1 : 1, off = 2.6 + rnd() * 2.2;
+      tryPut(x + nx * side * off, z + nz * side * off);
+      if (rnd() < 0.35) tryPut(x + nx * side * (off + 0.9), z + nz * side * (off + 0.9) + (rnd() - 0.5));
+    }
+  }
+  for (const p of PLAZAS) for (let i = 0; i < 6; i++) {             // у площадок — между выходами
+    const a = rnd() * 6.28, r = 8 + rnd() * 2;
+    tryPut(p.x + Math.sin(a) * r, p.z + Math.cos(a) * r);
+  }
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  parts.forEach((part, i) => {
+    if (!spots[i].length) return;
+    const im = new THREE.InstancedMesh(part.geo, mesh.material, spots[i].length);
+    spots[i].forEach(([x, z, s, rot], j) => {
+      e.set(0, rot, 0); q.setFromEuler(e); sc.setScalar(s);
+      m.compose(v.set(x, heightAt(x, z) - 0.05 * s, z), q, sc); im.setMatrixAt(j, m);
+    });
+    im.castShadow = true; im.receiveShadow = true;
+    scene.add(im);
+  });
 }
